@@ -1,0 +1,341 @@
+/* CompactAlertIndicators.module.css */
+
+/* Main card container */
+.card {
+  border-radius: 8px;
+  padding: 12px;
+  position: relative;
+  background: linear-gradient(
+    135deg,
+    #3a3f45 0%,
+    #2b2f33 25%,
+    #3a3f45 50%,
+    #2b2f33 75%,
+    #3a3f45 100%
+  );
+  background-size: 200% 200%;
+  box-shadow: 
+    inset 0 3px 8px rgba(0,0,0,0.6),
+    inset 0 -2px 4px rgba(255,255,255,0.03),
+    0 6px 12px rgba(0,0,0,0.7);
+  border: 2px solid #1a1d20;
+}
+
+/* Screw decorations */
+.screw {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, #555, #2a2f35);
+  box-shadow: 
+    inset 0 1px 3px rgba(0,0,0,0.8), 
+    0 1px 2px rgba(255,255,255,0.1);
+  border: 1px solid #1a1d20;
+  z-index: 10;
+}
+
+.screwTopLeft {
+  top: 8px;
+  left: 8px;
+}
+
+.screwTopRight {
+  top: 8px;
+  right: 8px;
+}
+
+.screwBottomLeft {
+  bottom: 8px;
+  left: 8px;
+}
+
+.screwBottomRight {
+  bottom: 8px;
+  right: 8px;
+}
+
+.screwIcon {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: #1a1d20;
+  transform: rotate(45deg);
+  font-weight: bold;
+}
+
+/* Header section */
+.header {
+  font-size: 12px;
+  font-weight: bold;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #c0c5ca;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+  font-family: monospace;
+  padding-bottom: 10px;
+  margin-bottom: 12px;
+  border-bottom: 2px solid #1a1d20;
+  text-align: center;
+}
+
+/* Overall status bar */
+.statusBar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 2px solid;
+  transition: all 0.3s ease;
+}
+
+.statusBarNormal {
+  background: rgba(46, 204, 113, 0.1);
+  border-color: #2ecc71;
+  box-shadow: 0 0 12px rgba(46, 204, 113, 0.27);
+}
+
+.statusBarWarning {
+  background: rgba(243, 156, 18, 0.1);
+  border-color: #f39c12;
+  box-shadow: 0 0 12px rgba(243, 156, 18, 0.27);
+}
+
+.statusBarCritical {
+  background: rgba(231, 76, 60, 0.1);
+  border-color: #e74c3c;
+  box-shadow: 0 0 12px rgba(231, 76, 60, 0.27);
+}
+
+.statusIndicator {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.statusIndicatorNormal {
+  background-color: #2ecc71;
+  box-shadow: 0 0 12px #2ecc71;
+}
+
+.statusIndicatorWarning {
+  background-color: #f39c12;
+  box-shadow: 0 0 12px #f39c12;
+}
+
+.statusIndicatorCritical {
+  background-color: #e74c3c;
+  box-shadow: 0 0 12px #e74c3c;
+}
+
+.statusText {
+  font-size: 12px;
+  font-family: monospace;
+  font-weight: bold;
+  letter-spacing: 2px;
+}
+
+.statusTextNormal {
+  color: #2ecc71;
+}
+
+.statusTextWarning {
+  color: #f39c12;
+}
+
+.statusTextCritical {
+  color: #e74c3c;
+}
+
+.statusCount {
+  font-size: 10px;
+  font-family: monospace;
+  color: #9aa0a6;
+  margin-left: 8px;
+}
+
+/* Alert indicators container */
+.alertsContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Individual alert indicators */
+.alertIndicator {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 2px solid;
+  transition: all 0.3s ease;
+}
+
+.alertIndicatorInactive {
+  border-color: #2a2f35;
+  background: rgba(0,0,0,0.2);
+}
+
+.alertIndicatorEarly {
+  border-color: #2ecc71;
+  background: rgba(46, 204, 113, 0.1);
+  box-shadow: 0 0 8px rgba(46, 204, 113, 0.3);
+}
+
+.alertIndicatorMid {
+  border-color: #f39c12;
+  background: rgba(243, 156, 18, 0.12);
+  box-shadow: 0 0 8px rgba(243, 156, 18, 0.3);
+}
+
+.alertIndicatorLate {
+  border-color: #e74c3c;
+  background: rgba(231, 76, 60, 0.15);
+  box-shadow: 0 0 8px rgba(231, 76, 60, 0.3);
+}
+
+.alertLeft {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.alertIcon {
+  font-size: 16px;
+}
+
+.alertLabel {
+  font-size: 11px;
+  font-family: monospace;
+  font-weight: bold;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+.alertLabelInactive {
+  color: #5a5f65;
+}
+
+.alertLabelEarly {
+  color: #2ecc71;
+}
+
+.alertLabelMid {
+  color: #f39c12;
+}
+
+.alertLabelLate {
+  color: #e74c3c;
+}
+
+.alertRight {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.alertCount {
+  font-size: 16px;
+  font-family: monospace;
+  font-weight: bold;
+}
+
+.alertCountInactive {
+  color: #5a5f65;
+}
+
+.alertCountEarly {
+  color: #2ecc71;
+}
+
+.alertCountMid {
+  color: #f39c12;
+}
+
+.alertCountLate {
+  color: #e74c3c;
+}
+
+.alertTime {
+  font-size: 9px;
+  font-family: monospace;
+}
+
+.alertTimeEarly {
+  color: #2ecc71;
+}
+
+.alertTimeMid {
+  color: #f39c12;
+}
+
+.alertTimeLate {
+  color: #e74c3c;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .card {
+    padding: 10px;
+  }
+  
+  .header {
+    font-size: 11px;
+    padding-bottom: 8px;
+    margin-bottom: 10px;
+  }
+  
+  .statusBar {
+    padding: 6px 10px;
+    margin-bottom: 12px;
+  }
+  
+  .alertIndicator {
+    padding: 8px 10px;
+  }
+  
+  .alertLabel {
+    font-size: 10px;
+  }
+  
+  .alertCount {
+    font-size: 14px;
+  }
+}
+
+/* Animation for alert state changes */
+.alertIndicator {
+  animation: alertPulse 0.3s ease-in-out;
+}
+
+@keyframes alertPulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.02); }
+  100% { transform: scale(1); }
+}
+
+/* Focus styles for accessibility */
+.alertIndicator:focus-within {
+  outline: 2px solid #4299e1;
+  outline-offset: 2px;
+}
+
+/* Print styles */
+@media print {
+  .card {
+    background: white !important;
+    box-shadow: none !important;
+    border: 1px solid #000 !important;
+  }
+  
+  .screw {
+    display: none !important;
+  }
+}

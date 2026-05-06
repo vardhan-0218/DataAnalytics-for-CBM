@@ -1,0 +1,80 @@
+Modify the existing industrial instrument panel UI without changing the theme, layout, graph, or panel styling.
+
+Keep the dark brushed metal texture, gauges, and Grafana-style graph exactly the same.
+
+Only replace the current parameter controls with six realistic industrial control components based on the following parameters.
+
+Place all six controls in the control section using the same industrial theme and metal panel style.
+
+Minimize the alerts panel on the right so more space is available for controls.
+
+Use realistic factory instrumentation components such as rotary knobs, industrial dial selectors, and switch-style meters.
+
+Controls to add:
+
+1. Wear Rate
+Type: Precision rotary knob with scale
+Range: 0 → 0.02 A/unit
+Purpose: Controls degradation speed
+Label below control: Early vs Mid vs Late alert timing
+
+2. Noise Level (σ)
+Type: Rotary dial with tick marks
+Range: 0.05 → 0.3 A
+Purpose: Controls noise level for signal simulation
+Label: False alarm vs stable detection
+
+3. Operator Compensation
+Type: Percentage rotary knob with digital display
+Range: 0 → 30%
+Purpose: Temporarily masks cycle time degradation
+Label: System still detects degradation
+
+4. Reset Frequency
+Type: Industrial toggle or dial selector
+Range: Low → High
+Purpose: Temporarily hides late alerts
+Label: NCR vs Normal operation
+
+5. Design Strength
+Type: Multi-position selector dial
+Options:
+Strong – 0.01 mm/1000h
+Nominal – 0.03 mm/1000h
+Weak – 0.06 mm/1000h
+Purpose: Controls overall drift increase
+
+6. Tolerance Sensitivity
+Type: Three-position selector knob
+Options:
+Low (10%)
+Medium (25%)
+High (50%)
+Purpose: Controls variation across machines
+
+Design requirements:
+
+Use the same metal panel theme already present in the UI.
+
+Controls should look like real industrial machine controls.
+
+Knobs should have:
+metallic texture
+tick marks
+indicator pointer
+engraved labels
+
+Colors must match the current UI theme:
+panel background dark graphite
+controls metallic grey
+indicator colors green, yellow, red
+
+Keep typography consistent with the existing UI.
+
+Do not change the central graph panel.
+
+Do not change gauge meters.
+
+Do not change the overall layout structure.
+
+Only redesign the control section to include these six industrial controls.
