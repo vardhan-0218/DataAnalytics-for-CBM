@@ -1,5 +1,5 @@
 
-# Industrial Instrument Panel
+# DataAnalytics-for-CBM (Industrial Instrument Panel)
 
 Industrial Instrument Panel is a full-stack monitoring dashboard for motor simulation data. It combines:
 
