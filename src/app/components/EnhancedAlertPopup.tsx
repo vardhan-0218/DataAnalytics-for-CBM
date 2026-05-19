@@ -108,6 +108,20 @@ export function EnhancedAlertPopup({
       setCurrentAlert(highestAlert);
       setIsVisible(true);
       setIsAnimating(true);
+      
+      // Auto-dismiss after 3 seconds
+      const autoDismissTimer = setTimeout(() => {
+        setIsAnimating(false);
+        setTimeout(() => {
+          setIsVisible(false);
+          setCurrentAlert(null);
+          if (onDismiss) {
+            onDismiss();
+          }
+        }, 300);
+      }, 3000);
+      
+      return () => clearTimeout(autoDismissTimer);
     } 
     // Hide popup when no alerts are active
     else if (!highestAlert && isVisible) {
