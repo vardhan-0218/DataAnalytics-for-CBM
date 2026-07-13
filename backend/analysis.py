@@ -1,32 +1,4 @@
-"""
-analysis.py — Real-Time Motor EWMA Alert Pipeline
-==================================================
-Connects to PostgreSQL, polls for new simulation_readings rows as they
-arrive from the Streamlit simulator, and runs the EWMA / alert pipeline
-continuously in real time.
 
-Architecture
-------------
-    [Streamlit app.py]  →  PostgreSQL  →  [this script]
-      (writes every cycle)                  (reads every second)
-                                               ↓ EWMA + alerts
-                                            Live console + live plot
-
-Usage
------
-    python analysis.py                  # live mode — polls until Ctrl+C
-    python analysis.py --run-id 3       # replay a specific stored run
-    python analysis.py --all-runs       # summary table across all runs
-    python analysis.py --no-plot        # suppress the live matplotlib window
-    python analysis.py --poll 2         # set poll interval in seconds (default 1)
-
-DATABASE_URL is read from the environment or from a .env file in the
-same directory as this script.
-
-Requirements
-------------
-    pip install "psycopg[binary]" pandas matplotlib numpy
-"""
 
 from __future__ import annotations
 
@@ -119,6 +91,11 @@ class Config:
         CT_LATE_PCT: float = 0.05,
         I_THRESHOLD: float = 10.0,
         alpha: float = 0.1,
+        alpha_fast: float | None = None,
+        alpha_slow: float | None = None,
+        g_early: float | None = None,
+        g_mid: float | None = None,
+        g_late: float | None = None,
         # How many recent rows to fetch per poll cycle
         fetch_limit: int = 200,
     ):
@@ -127,9 +104,9 @@ class Config:
         self.UCL_2SIGMA = MU + 2 * SIGMA
         self.UCL_3SIGMA = MU + 3 * SIGMA
 
-        self.S_EARLY = S_EARLY
-        self.S_MID = S_MID
-        self.S_LATE = S_LATE
+        self._S_EARLY = S_EARLY
+        self._S_MID = S_MID
+        self._S_LATE = S_LATE
         self.VAR_STABLE = VAR_STABLE
 
         self.CT_BASELINE = CT_BASELINE
@@ -137,8 +114,55 @@ class Config:
         self.CT_LATE_THRESHOLD = CT_BASELINE * (1 + CT_LATE_PCT)
 
         self.I_THRESHOLD = I_THRESHOLD
+        self._alpha = alpha
+        self.alpha_slow = alpha_slow if alpha_slow is not None else alpha
+        self.alpha_fast = alpha_fast if alpha_fast is not None else min(1.0, max(0.01, self.alpha_slow * 6.0))
+
         self.alpha = alpha
+
+        self.g_early = g_early if g_early is not None else self._S_EARLY * 10.0
+        self.g_mid = g_mid if g_mid is not None else self._S_MID * 10.0
+        self.g_late = g_late if g_late is not None else self._S_LATE * 10.0
+
         self.fetch_limit = fetch_limit
+
+    @property
+    def alpha(self) -> float:
+        return self._alpha
+
+    @alpha.setter
+    def alpha(self, value: float) -> None:
+        self._alpha = value
+        # Keep dual-EWMA relationship when alpha is updated via API.
+        self.alpha_slow = value
+        self.alpha_fast = min(1.0, max(0.01, value * 6.0))
+
+    @property
+    def S_EARLY(self) -> float:
+        return self._S_EARLY
+
+    @S_EARLY.setter
+    def S_EARLY(self, value: float) -> None:
+        self._S_EARLY = value
+        self.g_early = value * 10.0
+
+    @property
+    def S_MID(self) -> float:
+        return self._S_MID
+
+    @S_MID.setter
+    def S_MID(self, value: float) -> None:
+        self._S_MID = value
+        self.g_mid = value * 10.0
+
+    @property
+    def S_LATE(self) -> float:
+        return self._S_LATE
+
+    @S_LATE.setter
+    def S_LATE(self, value: float) -> None:
+        self._S_LATE = value
+        self.g_late = value * 10.0
 
 
 # =============================================================================
@@ -310,19 +334,26 @@ def setup_listen_notify(db_url: str) -> Optional[psycopg.Connection]:
 
 class AlertSystem:
     """
-    Stateful EWMA processor. Call .process(t, current) once per reading
+    Stateful dual-EWMA processor. Call .process(t, current) once per reading
     in ascending sim_t order. State persists across poll cycles so the
     EWMA is fully continuous even when new rows arrive in small batches.
 
+    The dual-EWMA pipeline tracks both a slow baseline and a fast trend line:
+      - slow EWMA = baseline position
+      - fast EWMA = responsive trend signal
+      - gap = fast - slow
+
     Tier    Trigger condition (all must hold simultaneously)
     ------  ---------------------------------------------------
-    EARLY   EWMA below UCL_2σ  AND slope > S_EARLY AND variance stable
-    MID     EWMA above UCL_2σ  AND slope > S_MID   AND cycle_time elevated
-    LATE    EWMA above UCL_3σ  AND slope > S_LATE  AND cycle_time high
+    EARLY   slow EWMA below UCL_2σ  AND gap > g_early  AND variance stable
+    MID     slow EWMA above UCL_2σ  AND gap > g_mid    AND cycle_time elevated
+    LATE    slow EWMA above UCL_3σ  AND gap > g_late   AND cycle_time high
     """
 
     def __init__(self, cfg: Config):
         self.cfg = cfg
+        self._fast = cfg.MU
+        self._slow = cfg.MU
         self.ewma_prev = cfg.MU
         self.ewma_history: list[float] = []
         self.variance_window: list[float] = []
@@ -348,7 +379,7 @@ class AlertSystem:
 
     def process(self, t: int, current: float, return_dict: bool = False):
         """
-        Advance one cycle. 
+        Advance one cycle using a dual-EWMA trend detector.
         
         Args:
             t: Simulation time step
@@ -356,12 +387,15 @@ class AlertSystem:
             return_dict: If True, returns dict with full analysis; if False, returns just EWMA value
             
         Returns:
-            float (EWMA value) if return_dict=False, or dict with full analysis if return_dict=True
+            float (slow EWMA baseline) if return_dict=False,
+            or dict with full analysis if return_dict=True
         """
         cfg = self.cfg
 
-        # EWMA update
-        ewma = cfg.alpha * current + (1 - cfg.alpha) * self.ewma_prev
+        # Dual EWMA update
+        self._fast = cfg.alpha_fast * current + (1 - cfg.alpha_fast) * self._fast
+        self._slow = cfg.alpha_slow * current + (1 - cfg.alpha_slow) * self._slow
+        ewma = self._slow
         self.ewma_prev = ewma
         self.ewma_history.append(ewma)
 
@@ -375,7 +409,10 @@ class AlertSystem:
             else 0.0
         )
 
-        # EWMA slope over last 10 steps
+        # Trend gap between fast and slow EWMA
+        gap = self._fast - self._slow
+
+        # EWMA slope over last 10 slow points for compatibility outputs
         k = 10
         slope = (
             (ewma - self.ewma_history[-k]) / k
@@ -383,7 +420,7 @@ class AlertSystem:
             else 0.0
         )
 
-        # Cycle-time proxy (mirrors simulate.py)
+        # Cycle-time proxy based on slow EWMA baseline
         cycle_time = cfg.CT_BASELINE + 0.2 * (ewma - cfg.MU)
 
         # Time-to-failure projection
@@ -392,84 +429,96 @@ class AlertSystem:
             if slope > 0
             else float("inf")
         )
-        # For API compatibility, use large number instead of inf
         t_fail_api = 999999.0 if t_fail == float("inf") else t_fail
 
-        # Alert tiers - check conditions
+        # Alert tiers - dual-EWMA decision logic
         early_active = (
             ewma < cfg.UCL_2SIGMA
-            and slope > cfg.S_EARLY
+            and gap > cfg.g_early
             and rolling_var < cfg.VAR_STABLE
         )
-        
         mid_active = (
             ewma > cfg.UCL_2SIGMA
-            and slope > cfg.S_MID
+            and gap > cfg.g_mid
             and cycle_time > cfg.CT_EARLY_THRESHOLD
         )
-        
         late_active = (
             ewma > cfg.UCL_3SIGMA
-            and slope > cfg.S_LATE
+            and gap > cfg.g_late
             and cycle_time > cfg.CT_LATE_THRESHOLD
         )
 
-        # Track first triggers for alerts
+        # Track first triggers for alerts - ONLY append once per trigger
         if early_active:
             if not self.alert_states["early"]:
-                # First time this alert triggers
+                # First time this alert becomes active
                 if not self._logged["early"]:
                     log.warning(
                         f"[EARLY ALERT] t={t}  EWMA={ewma:.3f} A  "
-                        f"slope={slope:.5f}  T_fail={t_fail:.0f} cycles"
+                        f"gap={gap:.5f}  T_fail={t_fail:.0f} cycles"
                     )
                     self._logged["early"] = True
-                self.alert_states["early_trigger_time"] = t
-                # Store as dict for API, or int for analysis.py compatibility
-                if return_dict:
-                    from datetime import datetime
-                    self.alerts["early"].append({"t": t, "ewma": round(ewma, 4), "timestamp": datetime.now().isoformat(timespec="seconds")})
+                
+                # Only set trigger time and append if this is truly the first trigger
+                if self.alert_states["early_trigger_time"] is None:
+                    self.alert_states["early_trigger_time"] = t
+                    log.info(f"[ALERT HISTORY] Adding EARLY alert at t={t} (first trigger)")
+                    if return_dict:
+                        from datetime import datetime
+                        self.alerts["early"].append({"t": t, "ewma": round(ewma, 4), "timestamp": datetime.now().isoformat(timespec="seconds")})
+                    else:
+                        self.alerts["early"].append(t)
                 else:
-                    self.alerts["early"].append(t)
+                    log.debug(f"[ALERT HISTORY] Skipping EARLY alert at t={t} (already triggered at t={self.alert_states['early_trigger_time']})")
 
         if mid_active:
             if not self.alert_states["mid"]:
-                # First time this alert triggers
+                # First time this alert becomes active
                 if not self._logged["mid"]:
                     log.warning(
                         f"[MID ALERT]   t={t}  EWMA={ewma:.3f} A  "
-                        f"slope={slope:.5f}  T_fail={t_fail:.0f} cycles"
+                        f"gap={gap:.5f}  T_fail={t_fail:.0f} cycles"
                     )
                     self._logged["mid"] = True
-                self.alert_states["mid_trigger_time"] = t
-                if return_dict:
-                    from datetime import datetime
-                    self.alerts["mid"].append({"t": t, "ewma": round(ewma, 4), "timestamp": datetime.now().isoformat(timespec="seconds")})
+                
+                # Only set trigger time and append if this is truly the first trigger
+                if self.alert_states["mid_trigger_time"] is None:
+                    self.alert_states["mid_trigger_time"] = t
+                    log.info(f"[ALERT HISTORY] Adding MID alert at t={t} (first trigger)")
+                    if return_dict:
+                        from datetime import datetime
+                        self.alerts["mid"].append({"t": t, "ewma": round(ewma, 4), "timestamp": datetime.now().isoformat(timespec="seconds")})
+                    else:
+                        self.alerts["mid"].append(t)
                 else:
-                    self.alerts["mid"].append(t)
+                    log.debug(f"[ALERT HISTORY] Skipping MID alert at t={t} (already triggered at t={self.alert_states['mid_trigger_time']})")
 
         if late_active:
             if not self.alert_states["late"]:
-                # First time this alert triggers
+                # First time this alert becomes active
                 if not self._logged["late"]:
                     log.warning(
                         f"[LATE ALERT]  t={t}  EWMA={ewma:.3f} A  "
-                        f"slope={slope:.5f}  T_fail={t_fail:.0f} cycles"
+                        f"gap={gap:.5f}  T_fail={t_fail:.0f} cycles"
                     )
                     self._logged["late"] = True
-                self.alert_states["late_trigger_time"] = t
-                if return_dict:
-                    from datetime import datetime
-                    self.alerts["late"].append({"t": t, "ewma": round(ewma, 4), "timestamp": datetime.now().isoformat(timespec="seconds")})
+                
+                # Only set trigger time and append if this is truly the first trigger
+                if self.alert_states["late_trigger_time"] is None:
+                    self.alert_states["late_trigger_time"] = t
+                    log.info(f"[ALERT HISTORY] Adding LATE alert at t={t} (first trigger)")
+                    if return_dict:
+                        from datetime import datetime
+                        self.alerts["late"].append({"t": t, "ewma": round(ewma, 4), "timestamp": datetime.now().isoformat(timespec="seconds")})
+                    else:
+                        self.alerts["late"].append(t)
                 else:
-                    self.alerts["late"].append(t)
+                    log.debug(f"[ALERT HISTORY] Skipping LATE alert at t={t} (already triggered at t={self.alert_states['late_trigger_time']})")
 
-        # Update current states
         self.alert_states["early"] = early_active
         self.alert_states["mid"] = mid_active
         self.alert_states["late"] = late_active
 
-        # Return format based on caller needs
         if return_dict:
             return {
                 "ewma": ewma,
@@ -486,8 +535,7 @@ class AlertSystem:
                     "late_trigger_time": self.alert_states["late_trigger_time"],
                 }
             }
-        else:
-            return ewma
+        return ewma
 
 
 # =============================================================================

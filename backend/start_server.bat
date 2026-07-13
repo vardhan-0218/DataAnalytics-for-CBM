@@ -27,4 +27,4 @@ echo Press CTRL+C to stop
 echo ========================================
 echo.
 
-python -m uvicorn api_server:app --reload --port 8000
+python -m uvicorn main_server:app --reload --port 8000

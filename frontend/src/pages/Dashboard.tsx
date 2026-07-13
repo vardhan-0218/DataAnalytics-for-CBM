@@ -6,12 +6,13 @@ import {
   emergencyStop,
   setMotorCurrent, 
   setKNoise, 
-  getHistory, 
   getEvents,
   getEWMAData,
   getAlerts,
-  getSystemStatus,
   healthCheck,
+  configureSynthetic,
+  getSyntheticHealth,
+  getSyntheticHistory,
   StepData,
   EWMAData,
   AlertData
@@ -61,33 +62,35 @@ function Screws({ count = 4 }: { count?: 2 | 4 }) {
 // ─────────────────────────────────────────
 // Sensor definitions
 // ─────────────────────────────────────────
+// Sensor definitions - Updated to show real EWMA data
+// ─────────────────────────────────────────
 const SENSOR_DEFS: SensorDef[] = [
   {
-    key: 'motorCurrent',
-    label: 'Motor Current',
+    key: 'ewmaSlow',
+    label: 'EWMA (Slow)',
     unit: 'A',
-    greenZone: [40, 70],
-    yellowZone: [70, 85],
-    redZone: [85, 100],
-    decimals: 1,
+    greenZone: [4.5, 5.3],
+    yellowZone: [5.3, 5.6],
+    redZone: [5.6, 7.0],
+    decimals: 3,
   },
   {
-    key: 'vacuumPressure',
-    label: 'Vacuum Pressure',
-    unit: 'inHg',
-    greenZone: [30, 45],
-    yellowZone: [45, 52],
-    redZone: [52, 60],
-    decimals: 1,
+    key: 'ewmaFast',
+    label: 'EWMA (Fast)',
+    unit: 'A',
+    greenZone: [4.5, 5.4],
+    yellowZone: [5.4, 5.8],
+    redZone: [5.8, 7.0],
+    decimals: 3,
   },
   {
-    key: 'airPressure',
-    label: 'Air Pressure',
-    unit: 'psi',
-    greenZone: [75, 95],
-    yellowZone: [95, 105],
-    redZone: [105, 120],
-    decimals: 0,
+    key: 'gap',
+    label: 'Gap (Fast-Slow)',
+    unit: 'A',
+    greenZone: [0, 0.05],
+    yellowZone: [0.05, 0.15],
+    redZone: [0.15, 0.5],
+    decimals: 4,
   },
 ];
 
@@ -98,27 +101,24 @@ export default function Dashboard() {
   // ── Session state (matching Streamlit exactly) ────────────────────────────
   const [running, setRunning] = useState(false);
   const [lastWearRate, setLastWearRate] = useState(0.0);
-  const [speed, setSpeed] = useState(0.3); // 1/speed_hz where speed_hz=2.0 initially
   const [pendingWearReset, setPendingWearReset] = useState(false);
   
   // ── Parameter state (matching Streamlit defaults) ─────────────────────────
-  const [speedHz, setSpeedHz] = useState(2.0);
   const [motorCurrentParam, setMotorCurrentParam] = useState(5.0); // I_BASE_INIT
   const [kNoise, setKNoiseState] = useState(0.05);
   const [wearRate, setWearRate] = useState(0.0); // Initially 0.0 like Streamlit
   const [cycleTimeParam, setCycleTimeParam] = useState(2.0); // New cycle time control
   
   // ── Simulation data ───────────────────────────────────────────────────────
-  const [history, setHistory] = useState<any[]>([]);
   const [events, setEvents] = useState<any[]>([]);
   const [currentData, setCurrentData] = useState<StepData | null>(null);
   const [ewmaData, setEWMAData] = useState<EWMAData | null>(null);
   const [alertData, setAlertData] = useState<AlertData | null>(null);
   
-  // ── UI display values ─────────────────────────────────────────────────────
-  const [motorCurrent, setMotorCurrentDisplay] = useState(65);
-  const [vacuumPressure, setVacuumPressure] = useState(42);
-  const [airPressure, setAirPressure] = useState(88);
+  // ── UI display values - Real EWMA data ───────────────────────────────────
+  const [ewmaSlow, setEwmaSlow] = useState(5.0);
+  const [ewmaFast, setEwmaFast] = useState(5.0);
+  const [gap, setGap] = useState(0.0);
   
   // ── Chart data ────────────────────────────────────────────────────────────
   const [chartHistory, setChartHistory] = useState<TelemetryPoint[]>([]);
@@ -127,10 +127,6 @@ export default function Dashboard() {
   const [isConnected, setIsConnected] = useState(true);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
-  const [systemStatus, setSystemStatus] = useState<any>(null);
-  
-  // ── Machine selection (UI only) ───────────────────────────────────────────
-  const [selectedMachine, setSelectedMachine] = useState<'M1' | 'M2' | 'M3'>('M1');
   
   // ── Responsive layout state ───────────────────────────────────────────────
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
@@ -145,6 +141,22 @@ export default function Dashboard() {
     mid: false,
     late: false,
   });
+  const alertPopupTimeoutRef = useRef<NodeJS.Timeout>();
+
+  // ── Synthetic CBM state — per-signal independent fault modes ─────────────
+  type FaultMode = 'healthy' | 'bearing' | 'blade';
+  const [vibFault,  setVibFault]  = useState<FaultMode>('healthy');
+  const [curFault,  setCurFault]  = useState<FaultMode>('healthy');
+  const [tempFault, setTempFault] = useState<FaultMode>('healthy');
+  
+  // Independent severity state for each signal type
+  const [vibSeverity, setVibSeverity]   = useState(0.5);
+  const [curSeverity, setCurSeverity]   = useState(0.5);
+  const [tempSeverity, setTempSeverity] = useState(0.5);
+
+  const [cbmData,    setCbmData]  = useState<any>(null);
+  const [cbmHistory, setCbmHistory] = useState<any[]>([]);
+  const lastFaultConfigRef = useRef<string>('h:h:h:0:0:0');
 
   // ── Refs for tracking ─────────────────────────────────────────────────────
   const intervalRef = useRef<NodeJS.Timeout>();
@@ -154,7 +166,26 @@ export default function Dashboard() {
   // previous vs current alert flags WITHOUT being in the dependency array.
   // This prevents the interval from restarting (and creating timing gaps)
   // every time an alert fires.
-  const lastAlertStateRef = useRef<AlertState>({ early: false, mid: false, late: false });
+  const lastAlertStateRef = useRef<AlertState>({ 
+    early: false, 
+    mid: false, 
+    late: false,
+    earlyTriggerTime: undefined,
+    midTriggerTime: undefined,
+    lateTriggerTime: undefined
+  });
+  // Track if we've received the first data point to prevent popups on initial load
+  const hasReceivedFirstDataRef = useRef(false);
+
+  // Cleanup timeouts on unmount
+  useEffect(() => {
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      if (motorCurrentTimeoutRef.current) clearTimeout(motorCurrentTimeoutRef.current);
+      if (kNoiseTimeoutRef.current) clearTimeout(kNoiseTimeoutRef.current);
+      if (alertPopupTimeoutRef.current) clearTimeout(alertPopupTimeoutRef.current);
+    };
+  }, []);
 
   // ── Initialize simulation (like Streamlit session state) ──────────────────
   useEffect(() => {
@@ -188,12 +219,7 @@ export default function Dashboard() {
       if (!connected) {
         setConnectionError('Backend server is not responding. Please ensure the API server is running on port 8000.');
       } else {
-        // Check system integration status
-        const status = await getSystemStatus();
-        setSystemStatus(status);
-        if (status && !status.integration_check.all_modules_loaded) {
-          setConnectionError('System integration issue detected. Some modules may not be properly loaded.');
-        }
+        setConnectionError(null);
       }
     }, 30000);
     
@@ -222,15 +248,47 @@ export default function Dashboard() {
     if (motorCurrentTimeoutRef.current) clearTimeout(motorCurrentTimeoutRef.current);
     motorCurrentTimeoutRef.current = setTimeout(() => {
       setMotorCurrent(motorCurrentParam);
-    }, 100); // Faster than React's 300ms to match Streamlit immediacy
+    }, 100);
   }, [motorCurrentParam]);
 
   useEffect(() => {
     if (kNoiseTimeoutRef.current) clearTimeout(kNoiseTimeoutRef.current);
     kNoiseTimeoutRef.current = setTimeout(() => {
-      setKNoise(kNoise); // calls the imported API function
+      setKNoise(kNoise);
     }, 100);
   }, [kNoise]);
+
+  // ── Apply per-signal fault config to simulator when any radio changes ──────
+  useEffect(() => {
+    const key = `${vibFault}:${curFault}:${tempFault}:${vibSeverity}:${curSeverity}:${tempSeverity}`;
+    if (key === lastFaultConfigRef.current) return;
+    lastFaultConfigRef.current = key;
+
+    // Compute signal-specific severities
+    const vibBearingSev = vibFault === 'bearing' ? vibSeverity : 0.0;
+    const vibBladeSev   = vibFault === 'blade'   ? vibSeverity : 0.0;
+
+    const curBearingSev = curFault === 'bearing' ? curSeverity : 0.0;
+    const curBladeSev   = curFault === 'blade'   ? curSeverity : 0.0;
+
+    const tempBearingSev = tempFault === 'bearing' ? tempSeverity : 0.0;
+    const tempBladeSev   = tempFault === 'blade'   ? tempSeverity : 0.0;
+
+    configureSynthetic({
+      severity: {
+        vib_bearing_fault: vibBearingSev,
+        vib_blade_wear:    vibBladeSev,
+        cur_bearing_fault: curBearingSev,
+        cur_blade_wear:    curBladeSev,
+        temp_bearing_fault:tempBearingSev,
+        temp_blade_wear:   tempBladeSev,
+        // global fallbacks for simple checks
+        bearing_fault: Math.max(vibBearingSev, curBearingSev, tempBearingSev),
+        blade_wear:    Math.max(vibBladeSev, curBladeSev, tempBladeSev)
+      },
+      load_ratio: 0.70,
+    });
+  }, [vibFault, curFault, tempFault, vibSeverity, curSeverity, tempSeverity]);
 
   // ── Handle wear rate changes as interrupts (exact Streamlit logic) ────────
   useEffect(() => {
@@ -254,11 +312,6 @@ export default function Dashboard() {
       setPendingWearReset(false);
     }
   }, [pendingWearReset]);
-
-  // ── Speed calculation (matching Streamlit: speed = 1.0 / speed_hz) ────────
-  useEffect(() => {
-    setSpeed(1.0 / speedHz);
-  }, [speedHz]);
 
   // ── Start/Stop simulation control ─────────────────────────────────────────
   const handleStartStop = async () => {
@@ -322,7 +375,6 @@ export default function Dashboard() {
     setLastWearRate(0.0);
     setWearRate(0.0);
     setPendingWearReset(false);
-    setHistory([]);
     setEvents([]);
     setCurrentData(null);
     setChartHistory([]);
@@ -330,15 +382,14 @@ export default function Dashboard() {
     setAlertData(null);
     
     // Reset all UI display values to initial state
-    setMotorCurrentDisplay(65);
-    setVacuumPressure(42);
-    setAirPressure(88);
+    setEwmaSlow(5.0);
+    setEwmaFast(5.0);
+    setGap(0.0);
     
     // Reset parameters to initial values
     setMotorCurrentParam(5.0);
     setKNoiseState(0.05);
     setCycleTimeParam(2.0);
-    setSpeedHz(2.0);
     
     // Clear alert state completely - return to normal initial position
     const clearedAlerts: AlertState = { 
@@ -352,7 +403,13 @@ export default function Dashboard() {
     setLastAlertState(clearedAlerts);
     lastAlertStateRef.current = clearedAlerts;
     
-    // Close any open alert popups
+    // Reset first data flag to prevent popups on restart
+    hasReceivedFirstDataRef.current = false;
+    
+    // Close any open alert popups and clear timeout
+    if (alertPopupTimeoutRef.current) {
+      clearTimeout(alertPopupTimeoutRef.current);
+    }
     setShowAlertPopup(false);
     
     // Reset simulation backend with error handling
@@ -377,7 +434,45 @@ export default function Dashboard() {
     }
   };
 
-  // ── Simulation step loop — 1 s tick, alerts from step data directly ────────
+  const handleDownloadRawCSV = async () => {
+    try {
+      const response = await fetch('http://localhost:8000/api/synthetic/download_raw_csv');
+      if (!response.ok) throw new Error('Network response was not ok');
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = url;
+      a.download = 'pulveriser_raw_1s_data.csv';
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Error downloading raw CSV:', error);
+      alert('Failed to download raw CSV file.');
+    }
+  };
+
+  // ── Synthetic CBM tick — fetch /api/synthetic/health every second ─────────
+  useEffect(() => {
+    if (!running || !isConnected) return;
+    const synFetch = async () => {
+      try {
+        const d = await getSyntheticHealth();
+        if (d) {
+          setCbmData(d);
+          // Also fetch history for sparklines
+          const h = await getSyntheticHistory(60);
+          if (h) setCbmHistory(h);
+        }
+      } catch { /* network hiccup — skip frame */ }
+    };
+    synFetch(); // immediate first tick
+    const synInterval = setInterval(synFetch, 1000);
+    return () => clearInterval(synInterval);
+  }, [running, isConnected]);
+
+  // ── Old simulation step loop — kept for old chart / alert data ─────────────
   useEffect(() => {
     if (running && isConnected) {
       const stepInterval = setInterval(async () => {
@@ -405,6 +500,9 @@ export default function Dashboard() {
               current:   data.current,
               noise:     data.noise,
               ewma:      data.ewma,
+              ewma_fast: data.ewma_fast,
+              ewma_slow: data.ewma_slow,
+              gap:       data.gap,
               slope:     data.slope,
               variance:  data.variance,
               cycleTime: data.cycle_time,
@@ -415,6 +513,9 @@ export default function Dashboard() {
               console.log(`Chart point t=${data.t}:`, {
                 current: data.current,
                 ewma: data.ewma,
+                ewma_fast: data.ewma_fast,
+                ewma_slow: data.ewma_slow,
+                gap: data.gap,
                 noise: data.noise,
                 isValidCurrent: typeof data.current === 'number' && !isNaN(data.current),
                 isValidEwma: typeof data.ewma === 'number' && !isNaN(data.ewma)
@@ -430,12 +531,90 @@ export default function Dashboard() {
           const stepAlerts = data.alerts;
           if (stepAlerts) {
             const prev = lastAlertStateRef.current;
-            const newEarly = stepAlerts.early && !prev.early;
-            const newMid   = stepAlerts.mid   && !prev.mid;
-            const newLate  = stepAlerts.late  && !prev.late;
+            
+            // Only show popup if:
+            // 1. We've received at least one data point (not initial load)
+            // 2. We have a NEW trigger time (not just state change)
+            // 3. The alert is currently active
+            // 4. The trigger time is for the CURRENT cycle (not a past alert)
+            const isInitialLoad = !hasReceivedFirstDataRef.current;
+            
+            const newEarlyTrigger = !isInitialLoad &&
+              stepAlerts.early && 
+              stepAlerts.early_trigger_time && 
+              stepAlerts.early_trigger_time !== prev.earlyTriggerTime &&
+              stepAlerts.early_trigger_time === data.t; // Only if triggered THIS cycle
+              
+            const newMidTrigger = !isInitialLoad &&
+              stepAlerts.mid && 
+              stepAlerts.mid_trigger_time && 
+              stepAlerts.mid_trigger_time !== prev.midTriggerTime &&
+              stepAlerts.mid_trigger_time === data.t; // Only if triggered THIS cycle
+              
+            const newLateTrigger = !isInitialLoad &&
+              stepAlerts.late && 
+              stepAlerts.late_trigger_time && 
+              stepAlerts.late_trigger_time !== prev.lateTriggerTime &&
+              stepAlerts.late_trigger_time === data.t; // Only if triggered THIS cycle
 
-            if (newEarly || newMid || newLate) {
+            // Debug logging for popup triggers
+            if (newEarlyTrigger || newMidTrigger || newLateTrigger) {
+              console.log('[POPUP] Alert popup triggered:', {
+                cycle: data.t,
+                early: newEarlyTrigger,
+                mid: newMidTrigger,
+                late: newLateTrigger,
+                isInitialLoad,
+                showAlertPopup: showAlertPopup, // Log current popup state
+                prevTriggers: {
+                  early: prev.earlyTriggerTime,
+                  mid: prev.midTriggerTime,
+                  late: prev.lateTriggerTime
+                },
+                currentTriggers: {
+                  early: stepAlerts.early_trigger_time,
+                  mid: stepAlerts.mid_trigger_time,
+                  late: stepAlerts.late_trigger_time
+                }
+              });
+            }
+
+            // Only show popup for the highest severity alert
+            // Additional check: don't show if popup is already visible
+            if (newLateTrigger && !showAlertPopup) {
+              // Clear any existing timeout
+              if (alertPopupTimeoutRef.current) {
+                clearTimeout(alertPopupTimeoutRef.current);
+              }
               setShowAlertPopup(true);
+              console.log('[POPUP] Showing LATE alert popup');
+              // Auto-dismiss after 10 seconds for late alert (critical)
+              alertPopupTimeoutRef.current = setTimeout(() => {
+                setShowAlertPopup(false);
+                console.log('[POPUP] Auto-dismissed LATE alert popup');
+              }, 10000);
+            } else if (newMidTrigger && !stepAlerts.late && !showAlertPopup) {
+              if (alertPopupTimeoutRef.current) {
+                clearTimeout(alertPopupTimeoutRef.current);
+              }
+              setShowAlertPopup(true);
+              console.log('[POPUP] Showing MID alert popup');
+              // Auto-dismiss after 8 seconds for mid alert
+              alertPopupTimeoutRef.current = setTimeout(() => {
+                setShowAlertPopup(false);
+                console.log('[POPUP] Auto-dismissed MID alert popup');
+              }, 8000);
+            } else if (newEarlyTrigger && !stepAlerts.mid && !stepAlerts.late && !showAlertPopup) {
+              if (alertPopupTimeoutRef.current) {
+                clearTimeout(alertPopupTimeoutRef.current);
+              }
+              setShowAlertPopup(true);
+              console.log('[POPUP] Showing EARLY alert popup');
+              // Auto-dismiss after 5 seconds for early alert
+              alertPopupTimeoutRef.current = setTimeout(() => {
+                setShowAlertPopup(false);
+                console.log('[POPUP] Auto-dismissed EARLY alert popup');
+              }, 5000);
             }
 
             const nextAlertState: AlertState = {
@@ -449,6 +628,12 @@ export default function Dashboard() {
 
             lastAlertStateRef.current = nextAlertState;
             setLastAlertState(nextAlertState);
+            
+            // Mark that we've received first data
+            if (isInitialLoad) {
+              hasReceivedFirstDataRef.current = true;
+              console.log('[POPUP] First data received, popup system armed');
+            }
 
             setAlertData(prev => ({
               status: stepAlerts.late ? 'LATE' : stepAlerts.mid ? 'MID' : stepAlerts.early ? 'EARLY' : 'NORMAL',
@@ -465,15 +650,13 @@ export default function Dashboard() {
             }));
           }
 
-          // ── Sensor gauge display ─────────────────────────────────────────
-          setMotorCurrentDisplay(Math.max(50, Math.min(100, data.current * 12)));
-          const deg = data.degradation || 0;
-          setVacuumPressure(Math.max(30, Math.min(60, 42 + deg * 20 + (Math.random() - 0.5) * 2)));
-          setAirPressure(Math.max(75, Math.min(120, 88 + deg * 15 + (Math.random() - 0.5) * 3)));
+          // ── Update sensor display with real EWMA data ────────────────────
+          setEwmaSlow(data.ewma_slow);
+          setEwmaFast(data.ewma_fast);
+          setGap(data.gap);
 
           // ── Non-critical background fetches (don’t block chart render) ──────
           getEWMAData().then(ewma => { if (ewma) setEWMAData(ewma); });
-          getHistory(50).then(h   => { if (h)    setHistory(h); });
           getEvents().then(ev     => { if (ev)   setEvents(ev); });
           // Fetch full alert data to populate alert_history panel
           getAlerts().then(fullAlerts => {
@@ -502,14 +685,7 @@ export default function Dashboard() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running, isConnected]);
 
-  // Alert thresholds - use real EWMA data
-  const currentAlerts = alertData?.current_alerts || { early: false, mid: false, late: false };
-  const isWarning = currentAlerts.early || currentAlerts.mid;
-  const isCritical = currentAlerts.late;
-  const showAlert = isWarning || isCritical;
-
-  // Get latest data for display
-  const latest = history.length > 0 ? history[history.length - 1] : null;
+  // Get current EWMA and cycle time for display
   const currentEWMA = currentData?.ewma || ewmaData?.ewma || 5.0;
   const currentCycleTime = currentData?.cycle_time || ewmaData?.cycle_time || 2.0;
 
@@ -602,14 +778,27 @@ export default function Dashboard() {
               </span>
             </div>
           </div>
-          <div className={styles.machineButtons}>
-            {(['M1', 'M2', 'M3'] as const).map(m => (
-              <button
-                key={m}
-                onClick={() => setSelectedMachine(m)}
-                className={`${styles.machineButton} ${selectedMachine === m ? styles.machineButtonActive : styles.machineButtonInactive}`}
-              >{m}</button>
-            ))}
+          {/* CBM status badge in header */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.65rem', fontFamily: 'monospace' }}>
+            {running && cbmData && (
+              <span style={{
+                padding: '4px 10px',
+                borderRadius: '20px',
+                background: cbmData.alarms?.severity === 'NORMAL' ? 'rgba(63,185,80,0.12)'
+                  : cbmData.alarms?.severity === 'EARLY' ? 'rgba(210,153,34,0.12)'
+                  : cbmData.alarms?.severity === 'MID'   ? 'rgba(240,136,62,0.12)'
+                  : 'rgba(248,81,73,0.12)',
+                border: `1px solid ${ cbmData.alarms?.severity === 'NORMAL' ? '#3fb950'
+                  : cbmData.alarms?.severity === 'EARLY' ? '#d29922'
+                  : cbmData.alarms?.severity === 'MID'   ? '#f0883e' : '#f85149'}`,
+                color: cbmData.alarms?.severity === 'NORMAL' ? '#3fb950'
+                  : cbmData.alarms?.severity === 'EARLY' ? '#d29922'
+                  : cbmData.alarms?.severity === 'MID'   ? '#f0883e' : '#f85149',
+              }}>
+                {cbmData.alarms?.severity === 'NORMAL' ? '✅' : cbmData.alarms?.severity === 'EARLY' ? '⚠️' : cbmData.alarms?.severity === 'MID' ? '🔶' : '🚨'}
+                &nbsp;{cbmData.alarms?.severity} &nbsp;·&nbsp; MHI {cbmData.indices?.MHI?.toFixed(0)} &nbsp;·&nbsp; Win #{cbmData.window_idx}
+              </span>
+            )}
           </div>
         </div>
 
@@ -626,6 +815,118 @@ export default function Dashboard() {
 
           {/* ══ LEFT COLUMN ══ */}
           <div className={styles.leftColumn}>
+
+            {/* ── CBM Signal / Fault Control Sidebar ── */}
+            <div className={`${styles.card}`} style={{ position: 'relative', padding: '14px 12px 10px' }}>
+              <Screws count={4} />
+              <div className={`${styles.cardTitle} ${styles.cardTitleSmall}`} style={{ marginBottom: '12px' }}>
+                CBM SIGNAL CONTROL
+              </div>
+
+              {([
+                { key: 'vib',  label: 'VIBRATION',     color: '#00b4ff', rgb: '0,180,255',   value: vibFault,  setter: setVibFault,  sev: vibSeverity,  setSev: setVibSeverity  },
+                { key: 'cur',  label: 'MOTOR CURRENT',  color: '#f0883e', rgb: '240,136,62',  value: curFault,  setter: setCurFault,  sev: curSeverity,  setSev: setCurSeverity  },
+                { key: 'temp', label: 'TEMPERATURE',    color: '#3fb950', rgb: '63,185,80',   value: tempFault, setter: setTempFault, sev: tempSeverity, setSev: setTempSeverity },
+              ] as const).map(({ key, label, color, rgb, value, setter, sev, setSev }) => (
+                <div key={key} style={{ marginBottom: '14px' }}>
+                  {/* Signal title */}
+                  <div style={{
+                    fontSize: '0.58rem', color, fontFamily: 'monospace', fontWeight: 700,
+                    textTransform: 'uppercase', letterSpacing: '0.12em',
+                    borderBottom: `1px solid ${color}33`, paddingBottom: '4px', marginBottom: '7px',
+                  }}>
+                    {label}
+                  </div>
+                  {/* Fault radio buttons */}
+                  <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', marginBottom: value !== 'healthy' ? '8px' : '0px' }}>
+                    {(['healthy', 'bearing', 'blade'] as const).map(f => {
+                      const FC: Record<string, string> = { healthy: '#3fb950', bearing: '#f0883e', blade: '#a371f7' };
+                      const FR: Record<string, string> = { healthy: '63,185,80', bearing: '240,136,62', blade: '163,113,247' };
+                      const active = value === f;
+                      return (
+                        <button
+                          key={f}
+                          id={`${key}-fault-${f}`}
+                          onClick={() => (setter as (v: 'healthy'|'bearing'|'blade') => void)(f)}
+                          style={{
+                            padding: '4px 10px', fontSize: '0.62rem', fontWeight: 600,
+                            borderRadius: '4px',
+                            border: `1px solid ${active ? FC[f] : 'rgba(255,255,255,0.1)'}`,
+                            background: active ? `rgba(${FR[f]},0.12)` : 'rgba(255,255,255,0.02)',
+                            color: active ? '#ffffff' : '#8b949e',
+                            cursor: 'pointer', transition: 'all 0.15s',
+                            boxShadow: active ? `0 0 6px rgba(${FR[f]},0.2)` : 'none',
+                            whiteSpace: 'nowrap',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                          }}
+                        >
+                          <span style={{
+                            display: 'inline-block',
+                            width: '7px',
+                            height: '7px',
+                            borderRadius: '50%',
+                            border: `1px solid ${active ? FC[f] : '#8b949e'}`,
+                            background: active ? FC[f] : 'transparent',
+                            marginRight: '6px',
+                            boxShadow: active ? `0 0 4px ${FC[f]}` : 'none',
+                            transition: 'all 0.15s',
+                          }} />
+                          {f === 'healthy' ? 'Healthy' : f === 'bearing' ? 'Bearing' : 'Blade'}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Signal-specific severity slider */}
+                  {value !== 'healthy' && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', paddingLeft: '4px', marginTop: '4px' }}>
+                      <span style={{ fontSize: '0.55rem', color: '#8b949e', textTransform: 'uppercase', fontFamily: 'monospace' }}>
+                        Sev:
+                      </span>
+                      <input
+                        type="range" min={0} max={1} step={0.05}
+                        value={sev}
+                        onChange={e => (setSev as (s: number) => void)(parseFloat(e.target.value))}
+                        style={{ flex: 1, height: '4px', accentColor: value === 'bearing' ? '#f0883e' : '#a371f7' }}
+                      />
+                      <span style={{ fontSize: '0.7rem', color: '#e6edf3', fontFamily: 'monospace', minWidth: '24px', textAlign: 'right' }}>
+                        {sev.toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {/* 1s Raw Signal Data Download Section */}
+              <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px dashed #21262d' }}>
+                <button
+                  id="raw-download-btn"
+                  onClick={handleDownloadRawCSV}
+                  style={{
+                    background: '#21262d',
+                    color: '#e6edf3',
+                    border: '1px solid #30363d',
+                    borderRadius: '6px',
+                    fontSize: '0.7rem',
+                    padding: '8px 12px',
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    width: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px',
+                    transition: 'all 0.15s',
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = '#30363d'}
+                  onMouseLeave={e => e.currentTarget.style.background = '#21262d'}
+                >
+                  📥 Download 1s Raw Signal Data (CSV)
+                </button>
+              </div>
+            </div>
+
             <IndustrialKnobControl
               label="Wear Rate"
               sublabel="Early vs Mid vs Late alert timing"
@@ -682,9 +983,9 @@ export default function Dashboard() {
               
               <div className={styles.statusIndicators}>
                 {[
-                  { label: 'Running',  active: running,            type: 'green' },
-                  { label: 'Warning',  active: motorCurrent > 85, type: 'yellow' },
-                  { label: 'Critical', active: false,             type: 'red' },
+                  { label: 'Running',  active: running,                                    type: 'green' },
+                  { label: 'Warning',  active: ewmaSlow > 5.5 || gap > 0.10,              type: 'yellow' },
+                  { label: 'Critical', active: ewmaSlow > 5.75 || gap > 0.20,             type: 'red' },
                 ].map(({ label, active, type }) => (
                   <div key={label} className={styles.statusIndicator}>
                     <div className={`${styles.statusLight} ${
@@ -704,37 +1005,183 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* ── Advanced Motor Telemetry — Enhanced graph with zoom/pan ── */}
-            <div className={styles.graphContainer}>
-              <ErrorBoundary fallback={
-                <div className={styles.graphError}>
-                  <div>GRAPH RENDERING ERROR</div>
-                  <div className={styles.graphErrorSubtext}>
-                    Please check console for details
-                  </div>
-                </div>
-              }>
-                <AdvancedTelemetryGraph 
-                  history={chartHistory}
-                  alerts={lastAlertState}
-                  config={{
-                    alpha: 0.1,
-                    mu: 5.0,
-                    ucl2Sigma: 5.5,
-                    ucl3Sigma: 5.75,
-                    windowSize: 300,
-                  }}
-                />
-              </ErrorBoundary>
-            </div>
+            {/* ── LIVE CBM DATA PANEL ── */}
+            {cbmData && (() => {
+              const idx   = cbmData.indices  || {};
+              const alm   = cbmData.alarms   || {};
+              const kpi   = cbmData.kpis     || {};
+              const feat  = cbmData.features || {};
+              const vib   = feat.vibration   || {};
+              const cur   = feat.current     || {};
+              const tmp   = feat.temperature || {};
 
-            {/* Advanced Alert System Status - Below Graph */}
+              const almColor: Record<string, string> = {
+                NORMAL: '#3fb950', EARLY: '#d29922', MID: '#f0883e', LATE: '#f85149'
+              };
+              const almSev  = alm.severity || 'NORMAL';
+              const color   = almColor[almSev] || '#3fb950';
+
+              const sigColors: Record<string, string> = {
+                vibration: '#00b4ff', current: '#f0883e', temperature: '#3fb950'
+              };
+
+              // All signal feature definitions — shown for each selected signal
+              const ALL_SIGNAL_FEATURES: Record<string, [string, number|undefined][]> = {
+                vibration:   [['RMS (g)',        vib.RMS],
+                              ['Kurtosis',       vib.Kurtosis],
+                              ['Crest Factor',   vib.CrestFactor],
+                              ['Spec. Centroid', vib.SpectralCentroid],
+                              ['Mid-Band E',     vib.MidBandEnergy],
+                              ['THD',            vib.THD]],
+                current:     [['RMS (A)',         cur.RMS],
+                              ['Kurtosis',        cur.Kurtosis],
+                              ['THD',             cur.THD],
+                              ['Variance',        cur.Variance]],
+                temperature: [['Mean (°C)',       tmp.Mean],
+                              ['RMS',             tmp.RMS],
+                              ['Rate of Change',  tmp.RateOfChange]],
+              };
+
+              const sigLabels: Record<string, string> = {
+                vibration: '〰 Vibration Features',
+                current:   '⚡ Motor Current Features',
+                temperature: '🌡 Temperature Features',
+              };
+
+              // Always show all three signals
+              const orderedSignals = ['vibration', 'current', 'temperature'];
+
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
+
+                  {/* Alarm banner */}
+                  <div style={{
+                    background: `rgba(${almSev==='NORMAL'?'63,185,80':almSev==='EARLY'?'210,153,34':almSev==='MID'?'240,136,62':'248,81,73'},0.10)`,
+                    border: `1px solid ${color}`, borderRadius: '6px',
+                    padding: '7px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  }}>
+                    <span style={{ fontFamily: 'monospace', fontSize: '0.75rem', color, fontWeight: 700 }}>
+                      {almSev === 'NORMAL' ? '✅' : almSev === 'EARLY' ? '⚠️' : almSev === 'MID' ? '🔶' : '🚨'} {almSev}
+                    </span>
+                    <span style={{ fontFamily: 'monospace', fontSize: '0.65rem', color: '#8b949e' }}>
+                      Min Index: <span style={{ color }}>{(alm.min_index ?? 0).toFixed(1)}</span>
+                      &nbsp;|&nbsp; Win #{cbmData.window_idx}
+                    </span>
+                  </div>
+
+                  {/* Health Indices */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '6px' }}>
+                    {[['MHI', idx.MHI, '#58a6ff'], ['PQI', idx.PQI, '#79c0ff'], ['GQI', idx.GQI, '#a5d6ff']].map(([label, val, c]) => (
+                      <div key={label as string} style={{
+                        background: '#0d1117', border: '1px solid #21262d', borderRadius: '6px',
+                        padding: '8px', textAlign: 'center',
+                      }}>
+                        <div style={{ fontSize: '0.6rem', color: '#8b949e', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{label as string}</div>
+                        <div style={{ fontSize: '1.3rem', fontWeight: 700, color: c as string, fontFamily: 'monospace' }}>
+                          {typeof val === 'number' ? val.toFixed(1) : '—'}
+                        </div>
+                        {/* mini bar */}
+                        <div style={{ height: '3px', background: '#21262d', borderRadius: '2px', marginTop: '4px' }}>
+                          <div style={{ height: '100%', width: `${Math.min(100, typeof val === 'number' ? val : 0)}%`,
+                            background: c as string, borderRadius: '2px', transition: 'width 0.5s' }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Selected signal features — one card per signal */}
+                  {orderedSignals.map(sig => {
+                    const sc = sigColors[sig];
+                    const feats = ALL_SIGNAL_FEATURES[sig] || [];
+                    return (
+                      <div key={sig} style={{ background: '#0d1117', border: `1px solid ${sc}22`, borderRadius: '6px', padding: '8px' }}>
+                        <div style={{ fontSize: '0.6rem', color: sc, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: '6px', fontWeight: 600 }}>
+                          {sigLabels[sig]}
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${feats.length <= 3 ? feats.length : 3}, 1fr)`, gap: '4px' }}>
+                          {feats.map(([name, val]) => (
+                            <div key={name} style={{ background: '#161b22', borderRadius: '4px', padding: '5px 6px' }}>
+                              <div style={{ fontSize: '0.55rem', color: '#8b949e' }}>{name}</div>
+                              <div style={{ fontSize: '0.8rem', color: sc, fontFamily: 'monospace', fontWeight: 600 }}>
+                                {typeof val === 'number' ? val.toFixed(4) : '—'}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {/* KPI row */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' }}>
+                    {[
+                      ['Cycle Time', kpi.CycleTime?.toFixed(1), 's',   '#3fb950'],
+                      ['Throughput', kpi.Throughput?.toFixed(1), 'kg/h','#3fb950'],
+                      ['Grind Eff.', kpi.GrindingEfficiency ? (kpi.GrindingEfficiency*100).toFixed(1) : '—', '%', '#d29922'],
+                      ['Load λ',    kpi.LoadRatio?.toFixed(2),  '',     '#f0883e'],
+                    ].map(([label, val, unit, c]) => (
+                      <div key={label as string} style={{
+                        background: '#0d1117', border: '1px solid #21262d', borderRadius: '6px',
+                        padding: '7px 6px', textAlign: 'center',
+                      }}>
+                        <div style={{ fontSize: '0.55rem', color: '#8b949e', textTransform: 'uppercase' }}>{label as string}</div>
+                        <div style={{ fontSize: '0.9rem', fontWeight: 700, color: c as string, fontFamily: 'monospace' }}>
+                          {val ?? '—'}<span style={{ fontSize: '0.6rem', marginLeft: '2px', color: '#8b949e' }}>{unit as string}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Mini sparkline — MHI over last windows */}
+                  {cbmHistory.length > 2 && (
+                    <div style={{ background: '#0d1117', border: '1px solid #21262d', borderRadius: '6px', padding: '8px' }}>
+                      <div style={{ fontSize: '0.6rem', color: '#8b949e', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                        Health History — Last {cbmHistory.length} windows
+                      </div>
+                      <svg width="100%" height="40" viewBox={`0 0 ${cbmHistory.length} 40`} preserveAspectRatio="none">
+                        {/* MHI line */}
+                        <polyline
+                          fill="none" stroke="#58a6ff" strokeWidth="1"
+                          points={cbmHistory.map((h, i) =>
+                            `${i},${40 - ((h.MHI ?? 50) / 100) * 38}`
+                          ).join(' ')}
+                        />
+                        {/* PQI line */}
+                        <polyline
+                          fill="none" stroke="#3fb950" strokeWidth="1"
+                          points={cbmHistory.map((h, i) =>
+                            `${i},${40 - ((h.PQI ?? 50) / 100) * 38}`
+                          ).join(' ')}
+                        />
+                        {/* 85% healthy threshold */}
+                        <line x1="0" y1={40 - 0.85*38} x2={cbmHistory.length} y2={40 - 0.85*38}
+                              stroke="#3fb950" strokeWidth="0.5" strokeDasharray="2,2" />
+                        {/* 70% warning threshold */}
+                        <line x1="0" y1={40 - 0.70*38} x2={cbmHistory.length} y2={40 - 0.70*38}
+                              stroke="#d29922" strokeWidth="0.5" strokeDasharray="2,2" />
+                      </svg>
+                      <div style={{ display: 'flex', gap: '12px', marginTop: '2px' }}>
+                        <span style={{ fontSize: '0.55rem', color: '#58a6ff' }}>— MHI</span>
+                        <span style={{ fontSize: '0.55rem', color: '#3fb950' }}>— PQI</span>
+                        <span style={{ fontSize: '0.55rem', color: '#8b949e' }}>· · 85 / 70 thresholds</span>
+                      </div>
+                    </div>
+                  )}
+
+                </div>
+              );
+            })()}
+
+            {/* Advanced Alert System Status */}
             <ControlPanelSection>
               <div className={styles.alertSystemStatus}>
-                ADVANCED ALERT SYSTEM ACTIVE - REAL-TIME EWMA MONITORING
+                {running
+                  ? `CBM LIVE — VIB:${vibFault.toUpperCase()} · CUR:${curFault.toUpperCase()} · TEMP:${tempFault.toUpperCase()} · WIN #${cbmData?.window_idx ?? 0}`
+                  : 'PRESS ▶ START TO BEGIN SYNTHETIC DATA GENERATION'}
               </div>
             </ControlPanelSection>
           </div>
+
 
           {/* ══ RIGHT COLUMN ══ */}
           <div className={styles.rightColumn}>
@@ -750,7 +1197,7 @@ export default function Dashboard() {
             
             <SensorStatusCard
               sensors={SENSOR_DEFS}
-              values={{ motorCurrent, vacuumPressure, airPressure }}
+              values={{ ewmaSlow, ewmaFast, gap }}
             />
             
             {/* Alert Indicators - Three-tier system */}
@@ -777,10 +1224,61 @@ export default function Dashboard() {
             
             {/* Current Status Row */}
             <div className={styles.statusRow}>
+              {/* EWMA Slow (Baseline) */}
+              <div className={styles.statusBox}>
+                <div className={styles.statusBoxLabel}>
+                  EWMA SLOW (BASELINE)
+                </div>
+                <div className={`${styles.statusBoxValue} ${
+                  ewmaSlow > 5.75 ? styles.statusBoxValueRed : 
+                  ewmaSlow > 5.5 ? styles.statusBoxValueYellow : 
+                  styles.statusBoxValueGreen
+                }`}>
+                  {ewmaSlow.toFixed(3)}
+                </div>
+                <div className={styles.statusBoxUnit}>
+                  A
+                </div>
+              </div>
+
+              {/* EWMA Fast (Trend) */}
+              <div className={styles.statusBox}>
+                <div className={styles.statusBoxLabel}>
+                  EWMA FAST (TREND)
+                </div>
+                <div className={`${styles.statusBoxValue} ${
+                  ewmaFast > 5.8 ? styles.statusBoxValueRed : 
+                  ewmaFast > 5.4 ? styles.statusBoxValueYellow : 
+                  styles.statusBoxValueCyan
+                }`}>
+                  {ewmaFast.toFixed(3)}
+                </div>
+                <div className={styles.statusBoxUnit}>
+                  A
+                </div>
+              </div>
+
+              {/* Gap (Fast - Slow) */}
+              <div className={styles.statusBox}>
+                <div className={styles.statusBoxLabel}>
+                  GAP (FAST - SLOW)
+                </div>
+                <div className={`${styles.statusBoxValue} ${
+                  gap > 0.20 ? styles.statusBoxValueRed : 
+                  gap > 0.10 ? styles.statusBoxValueYellow : 
+                  styles.statusBoxValueGreen
+                }`}>
+                  {gap.toFixed(4)}
+                </div>
+                <div className={styles.statusBoxUnit}>
+                  A
+                </div>
+              </div>
+
               {/* Current Wear Rate */}
               <div className={styles.statusBox}>
                 <div className={styles.statusBoxLabel}>
-                  CURRENT WEAR RATE
+                  WEAR RATE
                 </div>
                 <div className={`${styles.statusBoxValue} ${
                   wearRate > 0.02 ? styles.statusBoxValueRed : 
@@ -794,38 +1292,30 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* Last Wear Rate */}
-              <div className={styles.statusBox}>
-                <div className={styles.statusBoxLabel}>
-                  LAST WEAR RATE
-                </div>
-                <div className={`${styles.statusBoxValue} ${styles.statusBoxValueCyan}`}>
-                  {lastWearRate.toFixed(3)}
-                </div>
-                <div className={styles.statusBoxUnit}>
-                  A/u
-                </div>
-              </div>
-
-              {/* Interrupt Status */}
+              {/* Alert Status */}
               <div className={styles.interruptStatus}>
                 <div className={styles.interruptStatusLabel}>
-                  INTERRUPT STATUS:
+                  ALERT STATUS:
                 </div>
                 <div className={styles.interruptStatusTags}>
-                  {pendingWearReset && (
+                  {alertData?.current_alerts?.late && (
                     <span className={`${styles.statusTag} ${styles.statusTagReset}`}>
-                      RESET PENDING
+                      🚨 LATE
                     </span>
                   )}
-                  {wearRate !== lastWearRate && !pendingWearReset && (
+                  {alertData?.current_alerts?.mid && !alertData?.current_alerts?.late && (
                     <span className={`${styles.statusTag} ${styles.statusTagChange}`}>
-                      CHANGE DETECTED
+                      ⚠️ MID
                     </span>
                   )}
-                  {wearRate === lastWearRate && !pendingWearReset && (
+                  {alertData?.current_alerts?.early && !alertData?.current_alerts?.mid && !alertData?.current_alerts?.late && (
+                    <span className={`${styles.statusTag} ${styles.statusTagChange}`}>
+                      ⚠️ EARLY
+                    </span>
+                  )}
+                  {!alertData?.current_alerts?.early && !alertData?.current_alerts?.mid && !alertData?.current_alerts?.late && (
                     <span className={`${styles.statusTag} ${styles.statusTagStable}`}>
-                      STABLE
+                      ✅ NORMAL
                     </span>
                   )}
                 </div>

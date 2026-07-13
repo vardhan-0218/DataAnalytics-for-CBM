@@ -13,7 +13,7 @@ Endpoints:
 - POST /api/simulate - Run simulation with all parameters
 - POST /api/analyze - Run analysis on simulation data
 
-Run with: uvicorn api_server:app --reload --port 8000
+Run with: uvicorn main_server:app --reload --port 8000
 """
 
 from fastapi import FastAPI, Query
@@ -29,7 +29,17 @@ from datetime import datetime
 from data_generation import MotorSimulator
 from analysis import Config as EWMAConfig, AlertSystem
 
-app = FastAPI(title="Motor Simulation API")
+app = FastAPI(title="Motor Simulation API — CBM & Digital Twin")
+
+# ── Synthetic Digital Twin router ─────────────────────────────────────────────
+try:
+    from synthetic_api import router as synthetic_router
+    app.include_router(synthetic_router)
+    import logging as _logging
+    _logging.getLogger("main_server").info("Synthetic Digital Twin router mounted at /api/synthetic/*")
+except Exception as _e:
+    import logging as _logging
+    _logging.getLogger("main_server").warning(f"Synthetic router not loaded: {_e}")
 
 # CORS middleware for React frontend
 app.add_middleware(
@@ -73,7 +83,10 @@ class StepResponse(BaseModel):
     I_base: float
     degradation: float
     cycle_time: float
-    ewma: float
+    ewma: float  # slow EWMA (baseline)
+    ewma_fast: float  # fast EWMA (trend)
+    ewma_slow: float  # slow EWMA (same as ewma)
+    gap: float  # fast - slow (trend gap)
     slope: float
     variance: float
     alerts: Dict[str, Any]
@@ -81,7 +94,10 @@ class StepResponse(BaseModel):
 
 class EWMADataResponse(BaseModel):
     """Response for /api/ewma-data endpoint"""
-    ewma: float
+    ewma: float  # slow EWMA (baseline)
+    ewma_fast: float  # fast EWMA (trend)
+    ewma_slow: float  # slow EWMA (same as ewma, for clarity)
+    gap: float  # fast - slow (trend gap)
     slope: float
     variance: float
     cycle_time: float
@@ -92,6 +108,8 @@ class EWMADataResponse(BaseModel):
 class AlertConfigRequest(BaseModel):
     """Request for /api/alert-config endpoint"""
     alpha: Optional[float] = None
+    alpha_fast: Optional[float] = None
+    alpha_slow: Optional[float] = None
     mu: Optional[float] = None
     sigma: Optional[float] = None
     s_early: Optional[float] = None
@@ -129,6 +147,11 @@ async def start_simulation():
     simulator = MotorSimulator()
     alert_system = AlertSystem(ewma_config)
     
+    # Log the reset for debugging
+    import logging
+    logging.info("[API] System reset - new AlertSystem created with empty history")
+    logging.info(f"[API] Alert history after reset: {alert_system.alerts}")
+    
     # Ensure all parameters are at initial values
     simulator.set_motor_current(5.0)  # Reset to initial baseline
     simulator.set_k_noise(0.05)       # Reset to initial noise level
@@ -148,13 +171,16 @@ async def start_simulation():
 
 @app.get("/api/ewma-data", response_model=EWMADataResponse)
 async def get_ewma_data():
-    """Get current EWMA calculations, slopes, and variance"""
+    """Get current EWMA calculations, slopes, and variance with dual EWMA support"""
     global alert_system, ewma_config
     
     if not alert_system.ewma_history:
         # Return default values if no data processed yet
         return EWMADataResponse(
             ewma=ewma_config.MU,
+            ewma_fast=ewma_config.MU,
+            ewma_slow=ewma_config.MU,
+            gap=0.0,
             slope=0.0,
             variance=0.0,
             cycle_time=ewma_config.CT_BASELINE,
@@ -164,16 +190,21 @@ async def get_ewma_data():
                 "ucl_2sigma": ewma_config.UCL_2SIGMA,
                 "ucl_3sigma": ewma_config.UCL_3SIGMA,
                 "alpha": ewma_config.alpha,
+                "alpha_fast": ewma_config.alpha_fast,
+                "alpha_slow": ewma_config.alpha_slow,
             }
         )
     
-    # Calculate current values
-    ewma = alert_system.ewma_history[-1]
+    # Calculate current values - dual EWMA
+    ewma_slow = alert_system._slow  # baseline
+    ewma_fast = alert_system._fast  # trend
+    gap = ewma_fast - ewma_slow     # trend gap
+    ewma = ewma_slow  # for backward compatibility
     
-    # Slope over last 10 points
+    # Slope over last 10 points (using slow EWMA history)
     k = 10
     slope = (
-        (ewma - alert_system.ewma_history[-k]) / k
+        (ewma_slow - alert_system.ewma_history[-k]) / k
         if len(alert_system.ewma_history) > k
         else 0.0
     )
@@ -186,17 +217,20 @@ async def get_ewma_data():
     )
     
     # Cycle time
-    cycle_time = ewma_config.CT_BASELINE + 0.2 * (ewma - ewma_config.MU)
+    cycle_time = ewma_config.CT_BASELINE + 0.2 * (ewma_slow - ewma_config.MU)
     
     # Time to failure
     t_fail = (
-        (ewma_config.I_THRESHOLD - ewma) / slope
+        (ewma_config.I_THRESHOLD - ewma_slow) / slope
         if slope > 0
         else 999999.0  # Use large number instead of inf for JSON compatibility
     )
     
     return EWMADataResponse(
-        ewma=ewma,
+        ewma=ewma_slow,
+        ewma_fast=ewma_fast,
+        ewma_slow=ewma_slow,
+        gap=gap,
         slope=slope,
         variance=variance,
         cycle_time=cycle_time,
@@ -206,6 +240,8 @@ async def get_ewma_data():
             "ucl_2sigma": ewma_config.UCL_2SIGMA,
             "ucl_3sigma": ewma_config.UCL_3SIGMA,
             "alpha": ewma_config.alpha,
+            "alpha_fast": ewma_config.alpha_fast,
+            "alpha_slow": ewma_config.alpha_slow,
         }
     )
 
@@ -229,12 +265,16 @@ async def get_alerts():
 
 @app.post("/api/alert-config")
 async def configure_alerts(config: AlertConfigRequest):
-    """Configure alert thresholds and EWMA parameters"""
+    """Configure alert thresholds and EWMA parameters including dual EWMA"""
     global ewma_config, alert_system
     
     # Update configuration
     if config.alpha is not None:
         ewma_config.alpha = config.alpha
+    if config.alpha_fast is not None:
+        ewma_config.alpha_fast = config.alpha_fast
+    if config.alpha_slow is not None:
+        ewma_config.alpha_slow = config.alpha_slow
     if config.mu is not None:
         ewma_config.MU = config.mu
         ewma_config.UCL_2SIGMA = config.mu + 2 * ewma_config.SIGMA
@@ -255,9 +295,11 @@ async def configure_alerts(config: AlertConfigRequest):
     
     return {
         "status": "success",
-        "message": "Alert configuration updated",
+        "message": "Alert configuration updated with dual EWMA support",
         "config": {
             "alpha": ewma_config.alpha,
+            "alpha_fast": ewma_config.alpha_fast,
+            "alpha_slow": ewma_config.alpha_slow,
             "mu": ewma_config.MU,
             "sigma": ewma_config.SIGMA,
             "ucl_2sigma": ewma_config.UCL_2SIGMA,
@@ -272,9 +314,9 @@ async def configure_alerts(config: AlertConfigRequest):
 @app.get("/api/step", response_model=StepResponse)
 async def get_step():
     """
-    Advance simulation by one step and return current state with EWMA analysis.
+    Advance simulation by one step and return current state with dual EWMA analysis.
     
-    Returns the latest motor current, wear, noise, EWMA calculations, and alert states.
+    Returns the latest motor current, wear, noise, dual EWMA calculations, and alert states.
     """
     global simulator, alert_system
     
@@ -284,6 +326,11 @@ async def get_step():
     # Process through EWMA alert system with return_dict=True for API response
     ewma_result = alert_system.process(row["t"], row["motor_current"], return_dict=True)
     
+    # Extract dual EWMA values
+    ewma_slow = alert_system._slow
+    ewma_fast = alert_system._fast
+    gap = ewma_fast - ewma_slow
+    
     return StepResponse(
         current=row["motor_current"],
         wear=row["degradation"],
@@ -292,7 +339,10 @@ async def get_step():
         I_base=row["I_base"],
         degradation=row["degradation"],
         cycle_time=ewma_result["cycle_time"],
-        ewma=ewma_result["ewma"],
+        ewma=ewma_slow,  # backward compatibility
+        ewma_fast=ewma_fast,
+        ewma_slow=ewma_slow,
+        gap=gap,
         slope=ewma_result["slope"],
         variance=ewma_result["variance"],
         alerts=ewma_result["alerts"]

@@ -1,0 +1,704 @@
+/* DigitalTwin.module.css — Dark Industrial Theme for Digital Twin Dashboard */
+
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+/* ══════════════════════════════════════════════════════════════
+   ROOT & LAYOUT
+══════════════════════════════════════════════════════════════ */
+.container {
+  min-height: 100vh;
+  background: #040c18;
+  background-image:
+    radial-gradient(ellipse at 20% 20%, rgba(0,180,255,0.06) 0%, transparent 60%),
+    radial-gradient(ellipse at 80% 80%, rgba(124,58,237,0.07) 0%, transparent 60%),
+    linear-gradient(180deg, #040c18 0%, #060d1a 100%);
+  color: #e2e8f0;
+  font-family: 'Inter', sans-serif;
+  padding: 0;
+  overflow-x: hidden;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   HEADER
+══════════════════════════════════════════════════════════════ */
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 28px;
+  background: linear-gradient(135deg, rgba(0,180,255,0.08) 0%, rgba(124,58,237,0.08) 100%);
+  border-bottom: 1px solid rgba(0,180,255,0.2);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  backdrop-filter: blur(12px);
+}
+
+.headerLeft { display: flex; align-items: center; gap: 16px; }
+
+.headerTitle {
+  font-family: 'Orbitron', monospace;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #00b4ff;
+  letter-spacing: 0.08em;
+  text-shadow: 0 0 20px rgba(0,180,255,0.4);
+  margin: 0;
+}
+
+.headerSubtitle {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  color: rgba(148,163,184,0.7);
+  letter-spacing: 0.05em;
+}
+
+.headerRight { display: flex; align-items: center; gap: 12px; }
+
+.backBtn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: rgba(0,180,255,0.1);
+  border: 1px solid rgba(0,180,255,0.3);
+  border-radius: 6px;
+  color: #00b4ff;
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+  transition: all 0.2s;
+}
+.backBtn:hover {
+  background: rgba(0,180,255,0.2);
+  border-color: rgba(0,180,255,0.5);
+}
+
+.liveIndicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  color: #10b981;
+}
+.liveDot {
+  width: 7px;
+  height: 7px;
+  background: #10b981;
+  border-radius: 50%;
+  box-shadow: 0 0 8px #10b981;
+  animation: livePulse 1.5s ease-in-out infinite;
+}
+@keyframes livePulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 8px #10b981; }
+  50%       { opacity: 0.5; box-shadow: 0 0 3px #10b981; }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   MAIN CONTENT
+══════════════════════════════════════════════════════════════ */
+.content {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  grid-template-rows: auto 1fr;
+  gap: 16px;
+  padding: 16px 20px;
+  max-width: 1800px;
+  margin: 0 auto;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   CONTROL PANEL (left sidebar)
+══════════════════════════════════════════════════════════════ */
+.controlPanel {
+  grid-column: 1;
+  grid-row: 1 / 3;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.card {
+  background: linear-gradient(135deg, rgba(13,25,48,0.9) 0%, rgba(10,20,40,0.95) 100%);
+  border: 1px solid rgba(0,180,255,0.15);
+  border-radius: 12px;
+  padding: 16px;
+  position: relative;
+  overflow: hidden;
+}
+.card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(0,180,255,0.4), transparent);
+}
+
+.cardTitle {
+  font-family: 'Orbitron', monospace;
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: rgba(0,180,255,0.8);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cardTitle::before {
+  content: '';
+  width: 3px;
+  height: 12px;
+  background: #00b4ff;
+  border-radius: 2px;
+  box-shadow: 0 0 6px #00b4ff;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   RADIO GROUP
+══════════════════════════════════════════════════════════════ */
+.radioGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.radioOption {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+.radioOption:hover {
+  background: rgba(0,180,255,0.06);
+  border-color: rgba(0,180,255,0.2);
+}
+.radioOption.selected {
+  background: rgba(0,180,255,0.12);
+  border-color: rgba(0,180,255,0.4);
+}
+.radioOption.selected::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  background: var(--accent, #00b4ff);
+  box-shadow: 0 0 8px var(--accent, #00b4ff);
+}
+
+/* Fault-specific accent colours */
+.radioOption.selected.accentGreen  { --accent: #10b981; border-color: rgba(16,185,129,0.4); background: rgba(16,185,129,0.08); }
+.radioOption.selected.accentAmber  { --accent: #f59e0b; border-color: rgba(245,158,11,0.4); background: rgba(245,158,11,0.08); }
+.radioOption.selected.accentOrange { --accent: #f97316; border-color: rgba(249,115,22,0.4); background: rgba(249,115,22,0.08); }
+.radioOption.selected.accentCyan   { --accent: #00b4ff; border-color: rgba(0,180,255,0.4); background: rgba(0,180,255,0.08); }
+.radioOption.selected.accentYellow { --accent: #eab308; border-color: rgba(234,179,8,0.4); background: rgba(234,179,8,0.08); }
+.radioOption.selected.accentPurple { --accent: #a855f7; border-color: rgba(168,85,247,0.4); background: rgba(168,85,247,0.08); }
+
+.radioCircle {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid rgba(100,130,170,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+.radioOption.selected .radioCircle {
+  border-color: var(--accent, #00b4ff);
+  box-shadow: 0 0 6px var(--accent, #00b4ff);
+}
+.radioDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent, #00b4ff);
+  box-shadow: 0 0 4px var(--accent, #00b4ff);
+  transform: scale(0);
+  transition: transform 0.2s;
+}
+.radioOption.selected .radioDot { transform: scale(1); }
+
+.radioLabel {
+  flex: 1;
+}
+.radioLabelText {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: #cbd5e1;
+  display: block;
+}
+.radioLabelSub {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.66rem;
+  color: rgba(148,163,184,0.5);
+}
+
+.radioIcon {
+  font-size: 1rem;
+  opacity: 0.8;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   SEVERITY SLIDER
+══════════════════════════════════════════════════════════════ */
+.severitySection { margin-top: 4px; }
+.severityLabel {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.severityName {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #94a3b8;
+}
+.severityValue {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  color: #00b4ff;
+  font-weight: 600;
+}
+.severityLevelBadge {
+  font-size: 0.63rem;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+.badgeHealthy  { background: rgba(16,185,129,0.15); color: #10b981; border: 1px solid rgba(16,185,129,0.3); }
+.badgeMild     { background: rgba(234,179,8,0.15);  color: #eab308; border: 1px solid rgba(234,179,8,0.3); }
+.badgeModerate { background: rgba(249,115,22,0.15); color: #f97316; border: 1px solid rgba(249,115,22,0.3); }
+.badgeSevere   { background: rgba(239,68,68,0.15);  color: #ef4444; border: 1px solid rgba(239,68,68,0.3); }
+.badgeCritical { background: rgba(139,0,0,0.25);    color: #ff4444; border: 1px solid rgba(255,68,68,0.5); }
+
+.slider {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 5px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #00b4ff 0%, #00b4ff var(--fill,0%), rgba(51,65,85,0.6) var(--fill,0%));
+  outline: none;
+  cursor: pointer;
+  margin: 6px 0;
+}
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: #00b4ff;
+  box-shadow: 0 0 8px rgba(0,180,255,0.6);
+  cursor: pointer;
+  transition: box-shadow 0.2s;
+}
+.slider:hover::-webkit-slider-thumb { box-shadow: 0 0 14px rgba(0,180,255,0.8); }
+
+.severityTicks {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 2px;
+}
+.tick {
+  font-size: 0.58rem;
+  color: rgba(100,116,139,0.6);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   LIVE CONTROLS
+══════════════════════════════════════════════════════════════ */
+.controlButtons { display: flex; gap: 8px; }
+.btn {
+  flex: 1;
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: none;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: 'Inter', sans-serif;
+  letter-spacing: 0.03em;
+}
+.btnPrimary {
+  background: linear-gradient(135deg, #0066cc, #0099ff);
+  color: white;
+  box-shadow: 0 0 12px rgba(0,180,255,0.3);
+}
+.btnPrimary:hover { box-shadow: 0 0 20px rgba(0,180,255,0.5); transform: translateY(-1px); }
+.btnPrimary:active { transform: translateY(0); }
+.btnStop {
+  background: linear-gradient(135deg, #7f1d1d, #dc2626);
+  color: white;
+  box-shadow: 0 0 12px rgba(220,38,38,0.3);
+}
+.btnStop:hover { box-shadow: 0 0 20px rgba(220,38,38,0.5); transform: translateY(-1px); }
+.btnSecondary {
+  background: rgba(51,65,85,0.6);
+  color: #94a3b8;
+  border: 1px solid rgba(51,65,85,0.8);
+}
+.btnSecondary:hover { background: rgba(51,65,85,0.9); color: #cbd5e1; }
+
+/* ══════════════════════════════════════════════════════════════
+   MAIN AREA (right side)
+══════════════════════════════════════════════════════════════ */
+.mainArea {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ── KPI Row ── */
+.kpiRow {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 10px;
+}
+
+.kpiCard {
+  background: linear-gradient(135deg, rgba(13,25,48,0.9) 0%, rgba(10,20,40,0.95) 100%);
+  border: 1px solid rgba(0,180,255,0.12);
+  border-radius: 10px;
+  padding: 12px 14px;
+  position: relative;
+  overflow: hidden;
+  transition: border-color 0.3s;
+}
+.kpiCard::after {
+  content: '';
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 2px;
+  background: var(--kpi-color, #00b4ff);
+  opacity: 0.4;
+}
+.kpiLabel {
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: rgba(148,163,184,0.7);
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.kpiValue {
+  font-family: 'Orbitron', monospace;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--kpi-color, #00b4ff);
+  text-shadow: 0 0 12px var(--kpi-color, rgba(0,180,255,0.4));
+  line-height: 1.1;
+}
+.kpiUnit {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  color: rgba(148,163,184,0.5);
+  margin-top: 2px;
+}
+.kpiTrend {
+  position: absolute;
+  top: 10px; right: 10px;
+  font-size: 0.9rem;
+}
+
+/* ── Signal Chart ── */
+.chartCard {
+  background: linear-gradient(135deg, rgba(13,25,48,0.9) 0%, rgba(10,20,40,0.95) 100%);
+  border: 1px solid rgba(0,180,255,0.15);
+  border-radius: 12px;
+  padding: 16px;
+  flex: 1;
+  min-height: 260px;
+  position: relative;
+}
+
+.chartHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.chartTabRow {
+  display: flex;
+  gap: 6px;
+}
+.chartTab {
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: 'Inter', sans-serif;
+}
+.chartTab.active {
+  background: rgba(0,180,255,0.15);
+  border-color: rgba(0,180,255,0.4);
+  color: #00b4ff;
+}
+.chartTab:not(.active) {
+  background: rgba(30,41,59,0.5);
+  color: rgba(148,163,184,0.6);
+}
+.chartTab:not(.active):hover {
+  background: rgba(30,41,59,0.9);
+  color: #94a3b8;
+}
+
+.chartCanvas {
+  width: 100%;
+  height: 220px;
+  position: relative;
+}
+
+/* SVG waveform */
+.waveformSvg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ── Feature Grid ── */
+.featureGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.featureCard {
+  background: rgba(15,23,42,0.7);
+  border: 1px solid rgba(51,65,85,0.5);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.featureName {
+  font-size: 0.63rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: rgba(148,163,184,0.6);
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.featureVal {
+  font-family: 'Orbitron', monospace;
+  font-size: 1.0rem;
+  font-weight: 700;
+  color: #e2e8f0;
+}
+.featureSubtext {
+  font-size: 0.62rem;
+  color: rgba(100,116,139,0.7);
+  margin-top: 2px;
+}
+
+/* ── Health Gauge Row ── */
+.gaugeRow {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.gaugeCard {
+  background: linear-gradient(135deg, rgba(13,25,48,0.9) 0%, rgba(10,20,40,0.95) 100%);
+  border: 1px solid rgba(0,180,255,0.15);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.gaugeName {
+  font-family: 'Orbitron', monospace;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: rgba(148,163,184,0.8);
+}
+.gaugeArcWrapper {
+  position: relative;
+  width: 120px;
+  height: 70px;
+}
+.gaugeSvg { overflow: visible; }
+.gaugeValueText {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: 'Orbitron', monospace;
+  font-size: 1.3rem;
+  font-weight: 900;
+  color: var(--gauge-color, #00b4ff);
+  text-shadow: 0 0 10px var(--gauge-color, rgba(0,180,255,0.4));
+  line-height: 1;
+}
+.gaugeStatus {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 5px;
+}
+.gaugeNormal  { background: rgba(16,185,129,0.15); color: #10b981; border: 1px solid rgba(16,185,129,0.3); }
+.gaugeWarning { background: rgba(245,158,11,0.15); color: #f59e0b; border: 1px solid rgba(245,158,11,0.3); }
+.gaugeCritical{ background: rgba(239,68,68,0.15);  color: #ef4444; border: 1px solid rgba(239,68,68,0.3); }
+
+/* ══════════════════════════════════════════════════════════════
+   ALARM BANNER
+══════════════════════════════════════════════════════════════ */
+.alarmBanner {
+  border-radius: 8px;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  animation: alarmPulse 2s ease-in-out infinite;
+}
+.alarmNormal   { background: rgba(16,185,129,0.1);  border: 1px solid rgba(16,185,129,0.3); color: #10b981; }
+.alarmEarly    { background: rgba(234,179,8,0.1);   border: 1px solid rgba(234,179,8,0.4);  color: #eab308; }
+.alarmMid      { background: rgba(249,115,22,0.12); border: 1px solid rgba(249,115,22,0.5); color: #f97316; }
+.alarmLate     { background: rgba(239,68,68,0.15);  border: 1px solid rgba(239,68,68,0.6);  color: #ef4444; }
+@keyframes alarmPulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.8; }
+}
+.alarmIcon { font-size: 1.1rem; }
+.alarmText { flex: 1; }
+.alarmTitle { font-weight: 700; letter-spacing: 0.05em; }
+.alarmDesc  { font-size: 0.68rem; opacity: 0.8; font-weight: 400; }
+
+/* ══════════════════════════════════════════════════════════════
+   SIGNAL CARD STATES (selected vs dim)
+══════════════════════════════════════════════════════════════ */
+.cardSelected {
+  border-color: rgba(0,180,255,0.35) !important;
+  background: linear-gradient(135deg, rgba(13,25,48,0.95) 0%, rgba(10,20,40,0.98) 100%);
+  cursor: default;
+}
+.cardDim {
+  opacity: 0.55;
+  cursor: pointer;
+  transition: opacity 0.2s, border-color 0.2s;
+}
+.cardDim:hover {
+  opacity: 0.80;
+  border-color: rgba(0,180,255,0.25);
+}
+
+/* ── Signal header row (radio + icon + label + badge) ── */
+.signalHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+/* Radio circle used inline (standalone, not inside .radioOption) */
+.radioCircleActive {
+  /* applied dynamically via style prop */
+}
+
+.activeFaultBadge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.62rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 5px;
+  border: 1px solid;
+  white-space: nowrap;
+  background: rgba(0,0,0,0.2);
+  letter-spacing: 0.04em;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   NESTED FAULT-MODE SELECTOR (inside each signal card)
+══════════════════════════════════════════════════════════════ */
+.faultSelector {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 4px 0;
+}
+
+.faultOption {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.2s;
+  background: rgba(15,23,42,0.5);
+}
+.faultOption:hover {
+  background: rgba(30,41,59,0.8);
+  border-color: rgba(100,130,170,0.2);
+}
+.faultSelected {
+  background: rgba(30,41,59,0.6) !important;
+  border-color: rgba(100,130,170,0.45) !important;
+}
+
+.faultDotOuter {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(100,130,170,0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+.faultDotInner {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: transparent;
+  transition: all 0.2s;
+}
+.faultDotActive {
+  /* color & shadow applied inline */
+}
+
+.faultIcon {
+  font-size: 0.78rem;
+}
+
+.faultLabel {
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: rgba(148,163,184,0.6);
+  transition: color 0.2s;
+  white-space: nowrap;
+}
+.faultLabelActive {
+  font-weight: 600;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   SCROLLBAR
+══════════════════════════════════════════════════════════════ */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: rgba(15,23,42,0.5); }
+::-webkit-scrollbar-thumb { background: rgba(0,180,255,0.3); border-radius: 3px; }
+

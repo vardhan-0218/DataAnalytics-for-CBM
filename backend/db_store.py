@@ -150,3 +150,161 @@ def append_interrupts(run_id: int, events: Iterable[dict[str, Any]]) -> int:
         conn.commit()
 
     return len(payload)
+
+
+# ══════════════════════════════════════════════════════════════
+# NEW — CBM synthetic window persistence
+# ══════════════════════════════════════════════════════════════
+
+def ensure_cbm_table() -> None:
+    """Create cbm_windows table if it does not exist."""
+    if not db_is_ready():
+        return
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS cbm_windows (
+                    id                  SERIAL PRIMARY KEY,
+                    recorded_at         TIMESTAMPTZ DEFAULT NOW(),
+                    window_idx          INTEGER,
+                    signal_type         TEXT,
+                    fault_mode          TEXT,
+                    severity_bearing    FLOAT DEFAULT 0,
+                    severity_blade      FLOAT DEFAULT 0,
+                    severity_misalignment FLOAT DEFAULT 0,
+                    severity_imbalance    FLOAT DEFAULT 0,
+                    severity_looseness    FLOAT DEFAULT 0,
+                    severity_material_buildup FLOAT DEFAULT 0,
+                    severity_partial_clogging FLOAT DEFAULT 0,
+                    severity_choking      FLOAT DEFAULT 0,
+
+                    -- Vibration features
+                    vib_rms             FLOAT,
+                    vib_kurtosis        FLOAT,
+                    vib_crest_factor    FLOAT,
+                    vib_spectral_centroid FLOAT,
+                    vib_mid_band_energy FLOAT,
+                    vib_thd             FLOAT,
+
+                    -- Current features
+                    cur_rms             FLOAT,
+                    cur_kurtosis        FLOAT,
+                    cur_thd             FLOAT,
+
+                    -- Temperature features
+                    temp_mean           FLOAT,
+                    temp_rms            FLOAT,
+
+                    -- Health indices
+                    mhi                 FLOAT,
+                    pqi                 FLOAT,
+                    gqi                 FLOAT,
+                    alarm_severity      TEXT,
+                    min_index           FLOAT,
+
+                    -- KPIs
+                    cycle_time          FLOAT,
+                    throughput          FLOAT,
+                    grinding_efficiency FLOAT,
+                    load_ratio          FLOAT,
+                    batch_mass          FLOAT
+                )
+            """)
+        conn.commit()
+
+
+def insert_cbm_window(record: dict) -> None:
+    """Persist one synthetic health window to cbm_windows."""
+    if not db_is_ready():
+        return
+    ensure_cbm_table()
+
+    features = record.get("features", {})
+    vib = features.get("vibration", {})
+    cur = features.get("current", {})
+    tmp = features.get("temperature", {})
+    idx = record.get("indices", {})
+    alm = record.get("alarms", {})
+    kpi = record.get("kpis", {})
+    sev = record.get("severity", {})
+
+    with _connect() as conn:
+        with conn.cursor() as cur_conn:
+            cur_conn.execute("""
+                INSERT INTO cbm_windows (
+                    window_idx,
+                    fault_mode,
+                    severity_bearing, severity_blade,
+                    severity_misalignment, severity_imbalance, severity_looseness,
+                    severity_material_buildup, severity_partial_clogging, severity_choking,
+
+                    vib_rms, vib_kurtosis, vib_crest_factor,
+                    vib_spectral_centroid, vib_mid_band_energy, vib_thd,
+
+                    cur_rms, cur_kurtosis, cur_thd,
+
+                    temp_mean, temp_rms,
+
+                    mhi, pqi, gqi, alarm_severity, min_index,
+
+                    cycle_time, throughput, grinding_efficiency,
+                    load_ratio, batch_mass
+                ) VALUES (
+                    %(window_idx)s,
+                    %(fault_mode)s,
+                    %(severity_bearing)s, %(severity_blade)s,
+                    %(severity_misalignment)s, %(severity_imbalance)s, %(severity_looseness)s,
+                    %(severity_material_buildup)s, %(severity_partial_clogging)s, %(severity_choking)s,
+
+                    %(vib_rms)s, %(vib_kurtosis)s, %(vib_crest_factor)s,
+                    %(vib_spectral_centroid)s, %(vib_mid_band_energy)s, %(vib_thd)s,
+
+                    %(cur_rms)s, %(cur_kurtosis)s, %(cur_thd)s,
+
+                    %(temp_mean)s, %(temp_rms)s,
+
+                    %(mhi)s, %(pqi)s, %(gqi)s, %(alarm_severity)s, %(min_index)s,
+
+                    %(cycle_time)s, %(throughput)s, %(grinding_efficiency)s,
+                    %(load_ratio)s, %(batch_mass)s
+                )
+            """, {
+                "window_idx":          record.get("window_idx", 0),
+                "fault_mode":          alm.get("severity", "NORMAL"),
+                "severity_bearing":    sev.get("bearing_fault", 0.0),
+                "severity_blade":      sev.get("blade_wear", 0.0),
+                "severity_misalignment": sev.get("misalignment", 0.0),
+                "severity_imbalance":  sev.get("imbalance", 0.0),
+                "severity_looseness":  sev.get("looseness", 0.0),
+                "severity_material_buildup": sev.get("material_buildup", 0.0),
+                "severity_partial_clogging": sev.get("partial_clogging", 0.0),
+                "severity_choking":    sev.get("choking", 0.0),
+
+                "vib_rms":             vib.get("RMS"),
+                "vib_kurtosis":        vib.get("Kurtosis"),
+                "vib_crest_factor":    vib.get("CrestFactor"),
+                "vib_spectral_centroid": vib.get("SpectralCentroid"),
+                "vib_mid_band_energy": vib.get("MidBandEnergy"),
+                "vib_thd":             vib.get("THD"),
+
+                "cur_rms":             cur.get("RMS"),
+                "cur_kurtosis":        cur.get("Kurtosis"),
+                "cur_thd":             cur.get("THD"),
+
+                "temp_mean":           tmp.get("Mean"),
+                "temp_rms":            tmp.get("RMS"),
+
+                "mhi":                 idx.get("MHI"),
+                "pqi":                 idx.get("PQI"),
+                "gqi":                 idx.get("GQI"),
+                "alarm_severity":      alm.get("severity"),
+                "min_index":           alm.get("min_index"),
+
+                "cycle_time":          kpi.get("CycleTime"),
+                "throughput":          kpi.get("Throughput"),
+                "grinding_efficiency": kpi.get("GrindingEfficiency"),
+                "load_ratio":          kpi.get("LoadRatio"),
+                "batch_mass":          kpi.get("BatchMass"),
+            })
+        conn.commit()
+

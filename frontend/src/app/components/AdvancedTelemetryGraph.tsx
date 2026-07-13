@@ -25,7 +25,6 @@ import {
   ChartOptions,
   Plugin,
   TooltipItem,
-  ScatterController,
 } from 'chart.js';
 import { Line } from 'react-chartjs-2';
 import zoomPlugin from 'chartjs-plugin-zoom';
@@ -41,7 +40,6 @@ ChartJS.register(
   Tooltip,
   Legend,
   Filler,
-  ScatterController,
   zoomPlugin
 );
 
@@ -53,7 +51,10 @@ export interface TelemetryPoint {
   t?: number;           // Simulation cycle number
   current: number;
   noise: number;
-  ewma: number;
+  ewma: number;         // Slow EWMA (baseline)
+  ewma_fast?: number;   // Fast EWMA (trend)
+  ewma_slow?: number;   // Slow EWMA (same as ewma)
+  gap?: number;         // fast - slow (trend gap)
   slope?: number;
   variance?: number;
   cycleTime?: number;
@@ -153,93 +154,114 @@ export function AdvancedTelemetryGraph({
 
   // ── Chart.js plugin: tints chart area background by active alert tier ─────
   // Mirrors analysis.py LivePlot._TIER_STYLE shade + axvspan approach.
+  // DISABLED: Background tinting causes unwanted color changes
   const alertBgPlugin = useRef<Plugin<'line'>>({
     id: 'alertBackground',
     beforeDraw(chart) {
-      const tier = activeTierRef.current;
-      if (tier === 'none') return;
-      const { ctx, chartArea } = chart;
-      if (!chartArea) return;
-      ctx.save();
-      ctx.fillStyle = TIER_CHART_BG[tier];
-      ctx.fillRect(chartArea.left, chartArea.top, chartArea.width, chartArea.height);
-      ctx.restore();
+      // Background tinting disabled - keep chart background neutral
+      return;
+      
+      // Original code (disabled):
+      // const tier = activeTierRef.current;
+      // if (tier === 'none') return;
+      // const { ctx, chartArea } = chart;
+      // if (!chartArea) return;
+      // ctx.save();
+      // ctx.fillStyle = TIER_CHART_BG[tier];
+      // ctx.fillRect(chartArea.left, chartArea.top, chartArea.width, chartArea.height);
+      // ctx.restore();
     },
   }).current;
 
-  // ── Chart.js plugin: draws bold scatter cross (X) for late alert points ──
-  // Draws directly on canvas so the marker is always crisp and pixel-perfect,
-  // regardless of Chart.js point-style rendering.
-  const lateAlertCrossPlugin = useRef<Plugin<'line'>>({
-    id: 'lateAlertCross',
-    afterDraw(chart) {
-      const markers = alertMarkersRef.current.filter(m => m.type === 'late');
+  // ── Chart.js plugin: pixel-perfect alert markers on EWMA line ─────────────
+  // All markers are canvas-drawn at the rendered EWMA element position so they
+  // stay locked to the line in realtime (no Chart.js point-style drift).
+  const alertMarkersPlugin = useRef<Plugin<'line'>>({
+    id: 'alertMarkers',
+    afterDatasetsDraw(chart) {
+      const markers = alertMarkersRef.current;
       if (markers.length === 0) return;
 
       const { ctx, chartArea } = chart;
       if (!chartArea) return;
 
-      // Find the EWMA dataset dynamically (index shifts depending on how many alert markers exist)
-      const ewmaDatasetIndex = chart.data.datasets.findIndex(ds => ds.label === 'EWMA');
+      const ewmaDatasetIndex = chart.data.datasets.findIndex(
+        ds => ds.label === 'EWMA (Slow)' || ds.label === 'EWMA'
+      );
       if (ewmaDatasetIndex === -1) return;
 
-      const ewmaDataset = chart.getDatasetMeta(ewmaDatasetIndex);
-      if (!ewmaDataset || ewmaDataset.hidden) return;
+      const ewmaMeta = chart.getDatasetMeta(ewmaDatasetIndex);
+      if (!ewmaMeta || ewmaMeta.hidden) return;
+
+      const labels = chart.data.labels as string[] | undefined;
+      if (!labels) return;
 
       ctx.save();
-      // Clip to chart area so crosses don't bleed outside
       ctx.beginPath();
       ctx.rect(chartArea.left, chartArea.top, chartArea.width, chartArea.height);
       ctx.clip();
 
-      markers.forEach(marker => {
-        // Find the label's index in the current windowed labels array
-        const labelIndex = (chart.data.labels as string[] | undefined)?.indexOf(marker.label);
-        if (labelIndex === undefined || labelIndex < 0) return;
+      for (const marker of markers) {
+        const labelIndex = labels.indexOf(String(marker.t));
+        if (labelIndex < 0) continue;
 
-        // ── Use actual rendered element position ────────────────────────────
-        // Reading element.x / element.y is the only reliable way to get the
-        // pixel position. Scale-based getPixelForValue() drifts as the y-axis
-        // range expands with new data and is fragile with CategoryScale x-axis.
-        const element = ewmaDataset.data[labelIndex];
-        if (!element) return;
+        const element = ewmaMeta.data[labelIndex];
+        if (!element || element.x == null || element.y == null) continue;
 
-        const xPixel = element.x;
-        const yPixel = element.y;
+        const x = element.x;
+        const y = element.y;
 
-        const ARM = 10;   // half-length of each cross arm
-        const LINE_W = 4; // thickness of the cross arms
-
-        // White outline pass (drawn slightly larger for contrast)
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = LINE_W + 3;
-        ctx.lineCap = 'round';
-        ctx.beginPath();
-        // '\' diagonal
-        ctx.moveTo(xPixel - ARM, yPixel - ARM);
-        ctx.lineTo(xPixel + ARM, yPixel + ARM);
-        // '/' diagonal
-        ctx.moveTo(xPixel + ARM, yPixel - ARM);
-        ctx.lineTo(xPixel - ARM, yPixel + ARM);
-        ctx.stroke();
-
-        // Red cross pass (drawn on top)
-        ctx.strokeStyle = '#ff1a1a';
-        ctx.lineWidth = LINE_W;
-        ctx.lineCap = 'round';
-        ctx.beginPath();
-        ctx.moveTo(xPixel - ARM, yPixel - ARM);
-        ctx.lineTo(xPixel + ARM, yPixel + ARM);
-        ctx.moveTo(xPixel + ARM, yPixel - ARM);
-        ctx.lineTo(xPixel - ARM, yPixel + ARM);
-        ctx.stroke();
-
-        // Small red filled circle at centre
-        ctx.fillStyle = '#ff1a1a';
-        ctx.beginPath();
-        ctx.arc(xPixel, yPixel, 3, 0, Math.PI * 2);
-        ctx.fill();
-      });
+        if (marker.type === 'early') {
+          const R = 9;
+          ctx.fillStyle = '#00aa00';
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(x, y - R);
+          ctx.lineTo(x + R * 0.866, y + R * 0.5);
+          ctx.lineTo(x - R * 0.866, y + R * 0.5);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+        } else if (marker.type === 'mid') {
+          const R = 8;
+          ctx.fillStyle = '#ffa500';
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(x, y - R);
+          ctx.lineTo(x + R, y);
+          ctx.lineTo(x, y + R);
+          ctx.lineTo(x - R, y);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+        } else if (marker.type === 'late') {
+          const ARM = 10;
+          const LINE_W = 4;
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = LINE_W + 3;
+          ctx.lineCap = 'round';
+          ctx.beginPath();
+          ctx.moveTo(x - ARM, y - ARM);
+          ctx.lineTo(x + ARM, y + ARM);
+          ctx.moveTo(x + ARM, y - ARM);
+          ctx.lineTo(x - ARM, y + ARM);
+          ctx.stroke();
+          ctx.strokeStyle = '#ff1a1a';
+          ctx.lineWidth = LINE_W;
+          ctx.beginPath();
+          ctx.moveTo(x - ARM, y - ARM);
+          ctx.lineTo(x + ARM, y + ARM);
+          ctx.moveTo(x + ARM, y - ARM);
+          ctx.lineTo(x - ARM, y + ARM);
+          ctx.stroke();
+          ctx.fillStyle = '#ff1a1a';
+          ctx.beginPath();
+          ctx.arc(x, y, 3, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
 
       ctx.restore();
     },
@@ -259,6 +281,8 @@ export function AdvancedTelemetryGraph({
   const labels = React.useMemo(() => displayHistory.map(p => p.time), [displayHistory]);
   const currentData = React.useMemo(() => displayHistory.map(p => p.current), [displayHistory]);
   const ewmaData = React.useMemo(() => displayHistory.map(p => p.ewma), [displayHistory]);
+  const ewmaFastData = React.useMemo(() => displayHistory.map(p => p.ewma_fast ?? p.ewma), [displayHistory]);
+  const gapData = React.useMemo(() => displayHistory.map(p => p.gap ?? 0), [displayHistory]);
 
   // ── Save Graph Function ───────────────────────────────────────────────────
   
@@ -304,13 +328,12 @@ export function AdvancedTelemetryGraph({
 
   // ── Alert Markers State ──────────────────────────────────────────────────
   const [alertMarkers, setAlertMarkers] = useState<Array<{
-    label: string;    // x-axis label (cycle number string) for correct chart placement
+    t: number;        // simulation cycle — stable key for exact x placement
     type: 'early' | 'mid' | 'late';
     ewma: number;
     timestamp: number;
   }>>([]);
 
-  // Ref for late alert markers — read by the lateAlertCrossPlugin without stale closure
   const alertMarkersRef = useRef(alertMarkers);
   alertMarkersRef.current = alertMarkers;
 
@@ -324,36 +347,44 @@ export function AdvancedTelemetryGraph({
   useEffect(() => {
     const prevAlerts = prevAlertsRef.current;
 
-    // ── Capture trigger point when an alert flag FIRST flips true ────────────
-    // Only add markers when alert transitions from false to true (first trigger)
-    const latestPoint = displayHistory.length > 0
-      ? displayHistory[displayHistory.length - 1]
-      : null;
+    // ── Capture trigger point using trigger times from backend ────────────
+    // Only add markers when we receive a new trigger time from the backend
+    // Check if we have new trigger times from the backend
+    const hasNewEarlyTrigger = alerts.earlyTriggerTime && 
+      (!prevAlerts.earlyTriggerTime || alerts.earlyTriggerTime !== prevAlerts.earlyTriggerTime);
+    
+    const hasNewMidTrigger = alerts.midTriggerTime && 
+      (!prevAlerts.midTriggerTime || alerts.midTriggerTime !== prevAlerts.midTriggerTime);
+    
+    const hasNewLateTrigger = alerts.lateTriggerTime && 
+      (!prevAlerts.lateTriggerTime || alerts.lateTriggerTime !== prevAlerts.lateTriggerTime);
 
-    if (alerts.early && !prevAlerts.early && latestPoint) {
-      setAlertMarkers(prev => {
-        // Debounce: prevent rapid oscillation clusters, but allow new markers if >= 50 cycles later
-        if (prev.some(m => m.type === 'early' && (Number(latestPoint.time) - Number(m.label)) < 50)) return prev;
-        console.log(`EARLY alert marker → t=${latestPoint.time}, EWMA=${latestPoint.ewma}`);
-        return [...prev, { label: latestPoint.time, type: 'early', ewma: latestPoint.ewma, timestamp: latestPoint.timestamp }];
-      });
-    }
+    const addMarker = (
+      type: 'early' | 'mid' | 'late',
+      triggerT: number | undefined
+    ) => {
+      if (triggerT == null) return;
+      const triggerPoint = displayHistory.find(p => p.t === triggerT);
+      if (!triggerPoint) return; // wait until exact cycle exists in history
 
-    if (alerts.mid && !prevAlerts.mid && latestPoint) {
       setAlertMarkers(prev => {
-        if (prev.some(m => m.type === 'mid' && (Number(latestPoint.time) - Number(m.label)) < 50)) return prev;
-        console.log(`MID alert marker   → t=${latestPoint.time}, EWMA=${latestPoint.ewma}`);
-        return [...prev, { label: latestPoint.time, type: 'mid', ewma: latestPoint.ewma, timestamp: latestPoint.timestamp }];
+        if (prev.some(m => m.type === type)) return prev;
+        console.log(`${type.toUpperCase()} alert marker → t=${triggerT}, EWMA=${triggerPoint.ewma}`);
+        return [
+          ...prev,
+          {
+            t: triggerT,
+            type,
+            ewma: triggerPoint.ewma,
+            timestamp: triggerPoint.timestamp,
+          },
+        ];
       });
-    }
+    };
 
-    if (alerts.late && !prevAlerts.late && latestPoint) {
-      setAlertMarkers(prev => {
-        if (prev.some(m => m.type === 'late' && (Number(latestPoint.time) - Number(m.label)) < 50)) return prev;
-        console.log(`LATE alert marker  → t=${latestPoint.time}, EWMA=${latestPoint.ewma}`);
-        return [...prev, { label: latestPoint.time, type: 'late', ewma: latestPoint.ewma, timestamp: latestPoint.timestamp }];
-      });
-    }
+    if (hasNewEarlyTrigger) addMarker('early', alerts.earlyTriggerTime);
+    if (hasNewMidTrigger) addMarker('mid', alerts.midTriggerTime);
+    if (hasNewLateTrigger) addMarker('late', alerts.lateTriggerTime);
 
     prevAlertsRef.current = { ...alerts };
   }, [alerts, displayHistory]);
@@ -381,44 +412,6 @@ export function AdvancedTelemetryGraph({
     }
   }, [displayHistory.length]);
 
-
-  // ── Generate Alert Marker Datasets (legend-only) matching analysis.py ────────
-  // Visual markers are embedded in the EWMA dataset per-point for pixel-perfect
-  // positioning. These datasets are invisible (pointRadius=0) but appear in
-  // the legend so the user knows what each shape means.
-  const getAlertMarkers = useCallback(() => {
-    const datasets: any[] = [];
-
-    // Exact analysis.py marker configuration with bold late alert
-    const config: Record<string, { pointStyle: any; backgroundColor: string; borderColor: string; pointRadius: number; borderWidth: number }> = {
-      early: { pointStyle: 'triangle', backgroundColor: 'green',  borderColor: '#00aa00', pointRadius: 7,  borderWidth: 2 },
-      mid:   { pointStyle: 'rectRot',  backgroundColor: 'orange', borderColor: '#cc7700', pointRadius: 7,  borderWidth: 2 },
-      late:  { pointStyle: 'crossRot', backgroundColor: '#ff1a1a',borderColor: '#ff1a1a', pointRadius: 10, borderWidth: 3 }, // red border so the × is visible
-    };
-
-    Object.entries(config).forEach(([alertType, cfg]) => {
-      const hasMarker = alertMarkers.some(m => m.type === alertType);
-      if (!hasMarker) return; // only add legend entry once marker actually fired
-
-      datasets.push({
-        type: 'scatter',
-        label: `${alertType.charAt(0).toUpperCase() + alertType.slice(1)} Alert`,
-        // Off-screen single point — invisible but creates the legend entry
-        data: [{ x: -9999, y: -9999 }],
-        backgroundColor: cfg.backgroundColor,
-        borderColor: cfg.borderColor,
-        borderWidth: cfg.borderWidth,
-        pointRadius: cfg.pointRadius,        // visible in legend swatch
-        pointHoverRadius: 0,   // no hover
-        pointStyle: cfg.pointStyle,
-        showLine: false,
-        order: 0,
-        clip: false,           // allow off-screen without clipping
-      });
-    });
-
-    return datasets;
-  }, [alertMarkers]);
 
   // ══════════════════════════════════════════════════════════════════════════
   // ✨ DYNAMIC Y-AXIS SCALING - START
@@ -530,7 +523,7 @@ export function AdvancedTelemetryGraph({
             const text = legendItem.text?.toLowerCase() || '';
             // Toggle raw current / ewma visibility
             if (text === 'raw current') return visibleLines.current;
-            if (text.startsWith('ewma')) return visibleLines.ewma;
+            if (text.includes('ewma')) return visibleLines.ewma;
             // Hide all wear rate change lines from legend
             if (
               text.includes('wear rate') ||
@@ -545,23 +538,55 @@ export function AdvancedTelemetryGraph({
           // show a solid blue line swatch that matches the EWMA line colour.
           generateLabels: (chart) => {
             const defaultFn = ChartJS.defaults.plugins.legend.labels.generateLabels;
-            const items = defaultFn(chart);
-            return items.map(item => {
-              if (item.text === 'EWMA') {
+            const items = defaultFn(chart).map(item => {
+              if (item.text === 'EWMA (Slow)') {
                 item.pointStyle  = 'line';
-                item.strokeStyle = '#4169e1'; // royalblue — matches EWMA borderColor
+                item.strokeStyle = '#4169e1';
                 item.lineWidth   = 2;
                 item.fillStyle   = 'transparent';
+              } else if (item.text === 'EWMA (Fast)') {
+                item.pointStyle  = 'line';
+                item.strokeStyle = '#00bfff';
+                item.lineWidth   = 1.5;
+                item.fillStyle   = 'transparent';
+                item.lineDash    = [4, 2];
               }
               return item;
             });
+
+            const legendSwatches: Array<{ text: string; fill: string; style: 'triangle' | 'rectRot' | 'crossRot' }> = [];
+            if (alertMarkersRef.current.some(m => m.type === 'early')) {
+              legendSwatches.push({ text: 'Early Alert', fill: '#00aa00', style: 'triangle' });
+            }
+            if (alertMarkersRef.current.some(m => m.type === 'mid')) {
+              legendSwatches.push({ text: 'Mid Alert', fill: '#ffa500', style: 'rectRot' });
+            }
+            if (alertMarkersRef.current.some(m => m.type === 'late')) {
+              legendSwatches.push({ text: 'Late Alert', fill: '#ff1a1a', style: 'crossRot' });
+            }
+
+            for (const swatch of legendSwatches) {
+              items.push({
+                text: swatch.text,
+                fillStyle: swatch.fill,
+                strokeStyle: swatch.fill,
+                lineWidth: 0,
+                hidden: false,
+                index: items.length,
+                datasetIndex: -1,
+                pointStyle: swatch.style,
+              });
+            }
+
+            return items;
           },
         },
         onClick: (_e, legendItem, legend) => {
           const text = legendItem.text?.toLowerCase() || '';
           if (text === 'raw current') {
             setVisibleLines(prev => ({ ...prev, current: !prev.current }));
-          } else if (text.startsWith('ewma')) {
+          } else if (text.includes('ewma')) {
+            // Toggle both EWMA lines together
             setVisibleLines(prev => ({ ...prev, ewma: !prev.ewma }));
           } else {
             const chart = legend.chart;
@@ -608,6 +633,22 @@ export function AdvancedTelemetryGraph({
           label: (context: TooltipItem<'line'>) => {
             const value = context.parsed.y;
             const datasetLabel = context.dataset.label || '';
+            const index = context.dataIndex;
+            
+            // For EWMA datasets, show additional dual EWMA info
+            if (datasetLabel.includes('EWMA') && displayHistory[index]) {
+              const point = displayHistory[index];
+              if (datasetLabel.includes('Fast')) {
+                return `${datasetLabel}: ${(value || 0).toFixed(3)} A (trend)`;
+              } else if (datasetLabel.includes('Slow')) {
+                const gap = point.gap ?? 0;
+                return [
+                  `${datasetLabel}: ${(value || 0).toFixed(3)} A (baseline)`,
+                  `Gap: ${gap.toFixed(5)} A (fast - slow)`
+                ];
+              }
+            }
+            
             return `${datasetLabel}: ${(value || 0).toFixed(3)} A`;
           },
         },
@@ -728,64 +769,31 @@ export function AdvancedTelemetryGraph({
         },
         // EWMA — matching analysis.py: color="royalblue", lw=2
         {
-          label: `EWMA`,
+          label: `EWMA (Slow)`,
           data: ewmaData,
           borderColor: '#4169e1',  // royalblue
           backgroundColor: 'transparent',
           borderWidth: 2,  // analysis.py: lw=2
-          tension: 0.3,
-          // Per-point styles — alert trigger cycles get exact analysis.py markers
-          // NOTE: late alert visual is handled by lateAlertCrossPlugin (custom canvas draw)
-          pointRadius: ewmaData.map((_, i) => {
-            const lbl = labels[i];
-            const m = alertMarkers.find(am => am.label === lbl);
-            if (!m) return 0;
-            if (m.type === 'late') return 0;  // Hidden — drawn by lateAlertCrossPlugin
-            return 12;  // Large size for early/mid alert markers
-          }),
-          pointStyle: ewmaData.map((_, i) => {
-            const lbl = labels[i];
-            const m = alertMarkers.find(am => am.label === lbl);
-            if (!m) return 'circle';
-            if (m.type === 'early') return 'triangle';  // marker="^"
-            if (m.type === 'mid')   return 'rectRot';   // marker="D"
-            if (m.type === 'late')  return 'circle';    // Hidden — plugin draws it
-            return 'circle';
-          }),
-          pointBackgroundColor: ewmaData.map((_, i) => {
-            const lbl = labels[i];
-            const m = alertMarkers.find(am => am.label === lbl);
-            if (!m) return 'transparent';
-            if (m.type === 'early') return 'green';
-            if (m.type === 'mid')   return 'orange';
-            if (m.type === 'late')  return 'transparent'; // plugin handles drawing
-            return 'transparent';
-          }),
-          pointBorderColor: ewmaData.map((_, i) => {
-            const lbl = labels[i];
-            const m = alertMarkers.find(am => am.label === lbl);
-            if (!m) return 'transparent';
-            if (m.type === 'early') return '#ffffff';
-            if (m.type === 'mid')   return '#ffffff';
-            if (m.type === 'late')  return 'transparent';
-            return 'transparent';
-          }),
-          pointBorderWidth: ewmaData.map((_, i) => {
-            const lbl = labels[i];
-            const m = alertMarkers.find(am => am.label === lbl);
-            if (!m) return 0;
-            if (m.type === 'late') return 0;
-            return 3;  // Thicker white border for larger early/mid markers
-          }),
-          pointHoverRadius: ewmaData.map((_, i) => {
-            const lbl = labels[i];
-            const m = alertMarkers.find(am => am.label === lbl);
-            if (!m) return 5;
-            if (m.type === 'late') return 0;
-            return 14;  // Larger hover area for early/mid markers
-          }),
+          tension: 0,  // straight segments — matches matplotlib; markers sit on line
+          pointRadius: 0,
+          pointHoverRadius: 5,
           fill: false,
           hidden: !visibleLines.ewma,
+          order: 2,
+        },
+        // EWMA Fast — dual EWMA trend line
+        {
+          label: `EWMA (Fast)`,
+          data: ewmaFastData,
+          borderColor: '#00bfff',  // deepskyblue - lighter blue for fast EWMA
+          backgroundColor: 'transparent',
+          borderWidth: 1.5,  // Thinner than slow EWMA
+          borderDash: [4, 2],  // Dashed to distinguish from slow
+          tension: 0,
+          pointRadius: 0,
+          pointHoverRadius: 4,
+          fill: false,
+          hidden: !visibleLines.ewma,  // Tied to EWMA visibility
           order: 2,
         },
         // Control lines — matching analysis.py exactly
@@ -830,11 +838,9 @@ export function AdvancedTelemetryGraph({
             order: 5,
           },
         ] : []),
-        // Alert markers for legend
-        ...getAlertMarkers(),
       ].filter(dataset => dataset),
     };
-  }, [labels, currentData, ewmaData, cfg, visibleLines, alertMarkers, getAlertMarkers]);
+  }, [labels, currentData, ewmaData, ewmaFastData, cfg, visibleLines]);
 
   // ── Reset Zoom Function ───────────────────────────────────────────────────
 
@@ -955,40 +961,21 @@ export function AdvancedTelemetryGraph({
   // ── Force chart update when data changes ─────────────────────────────────
   
   useEffect(() => {
-    if (chartRef.current && displayHistory.length > 0) {
-      // Force chart to update when new data arrives
-      const updateChart = () => {
-        if (chartRef.current) {
-          try {
-            const chart = chartRef.current;
-            
-            // ✨ DYNAMIC SCALING - Always update axis ranges from calculated values
-            // Update X-axis range (from dynamicXRange)
-            if (chart.options.scales?.x) {
-              chart.options.scales.x.min = dynamicXRange.min;
-              chart.options.scales.x.max = dynamicXRange.max;
-            }
-            
-            // Update Y-axis range (from dynamicYRange)
-            if (chart.options.scales?.y) {
-              chart.options.scales.y.min = dynamicYRange.min;
-              chart.options.scales.y.max = dynamicYRange.max;
-            }
-            
-            chartRef.current.update('none'); // Update without animation for real-time feel
-          } catch (error) {
-            console.error('Chart update error:', error);
-            // Silently handle chart update errors to prevent white page
-          }
-        }
-      };
-      
-      // Immediate update
-      updateChart();
-      
-      // Additional updates with delays for reliability
-      setTimeout(updateChart, 10);
-      setTimeout(updateChart, 50);
+    const chart = chartRef.current;
+    if (!chart || displayHistory.length === 0) return;
+
+    try {
+      if (chart.options.scales?.x) {
+        chart.options.scales.x.min = dynamicXRange.min;
+        chart.options.scales.x.max = dynamicXRange.max;
+      }
+      if (chart.options.scales?.y) {
+        chart.options.scales.y.min = dynamicYRange.min;
+        chart.options.scales.y.max = dynamicYRange.max;
+      }
+      chart.update('none');
+    } catch (error) {
+      console.error('Chart update error:', error);
     }
   }, [displayHistory.length, alertMarkers.length, userInteracted, dynamicXRange, dynamicYRange]);
 
@@ -1046,7 +1033,7 @@ export function AdvancedTelemetryGraph({
               ref={chartRef} 
               data={chartData} 
               options={chartOptions}
-              plugins={[alertBgPlugin, lateAlertCrossPlugin]}
+              plugins={[alertBgPlugin, alertMarkersPlugin]}
             />
           </div>
         )}

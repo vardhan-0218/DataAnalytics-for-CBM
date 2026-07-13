@@ -56,7 +56,7 @@ pip install -r requirements.txt
 From backend folder:
 
 ```bash
-python -m uvicorn api_server:app --reload --port 8000
+python -m uvicorn main_server:app --reload --port 8000
 ```
 
 API base URL: http://localhost:8000  
@@ -71,6 +71,21 @@ npm run dev
 ```
 
 Vite dev URL is typically: http://localhost:5173
+
+### 5) Run Streamlit app (for real-time data)
+
+From the `backend` folder in a separate terminal:
+
+```bash
+# Windows shortcut
+start_streamlit.bat
+
+# Or manual startup:
+venv\Scripts\activate
+streamlit run app.py
+```
+
+Streamlit app URL: http://localhost:8501
 
 ## Main API Endpoints
 
@@ -90,6 +105,6 @@ Vite dev URL is typically: http://localhost:5173
 ## Notes
 
 - Frontend API integration is implemented in src/services/api.ts.
-- CORS is configured in backend/api_server.py for local frontend ports.
+- CORS is configured in backend/main_server.py for local frontend ports.
 - Additional backend details are available in backend/README.md.
   

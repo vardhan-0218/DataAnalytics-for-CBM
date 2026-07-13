@@ -6,7 +6,7 @@ This folder contains the Python backend for the Industrial Instrument Panel.
 
 - `data_generation.py` - Core motor simulation logic (UNTOUCHED from original)
 - `analysis.py` - EWMA analysis and alerting logic (UNTOUCHED from original)
-- `api_server.py` - FastAPI wrapper that exposes REST endpoints
+- `main_server.py` - FastAPI wrapper that exposes REST endpoints
 - `requirements.txt` - Python dependencies
 
 ## Setup
@@ -45,12 +45,34 @@ start_server.bat
 venv\Scripts\activate
 
 # Start server
-python -m uvicorn api_server:app --reload --port 8000
+python -m uvicorn main_server:app --reload --port 8000
 ```
 
 The API will be available at `http://localhost:8000`
 
 API documentation (Swagger UI): `http://localhost:8000/docs`
+
+## Running the Streamlit App (Real-time data visualization)
+
+Ensure the FastAPI server is running first.
+
+### Option 1: Using the startup script (Windows)
+
+```bash
+start_streamlit.bat
+```
+
+### Option 2: Manual startup
+
+```bash
+# Activate virtual environment
+venv\Scripts\activate
+
+# Start Streamlit app
+streamlit run app.py
+```
+
+The Streamlit app will be available at `http://localhost:8501`
 
 ### Testing the API
 
@@ -77,5 +99,5 @@ python test_api.py
 ## Notes
 
 - `data_generation.py` and `analysis.py` are UNTOUCHED from the original implementation
-- All API logic is contained in `api_server.py` which imports and wraps the existing modules
+- All API logic is contained in `main_server.py` which imports and wraps the existing modules
 - The simulator maintains state in memory (resets on server restart)

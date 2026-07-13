@@ -1,0 +1,105 @@
+{
+  "machine": {
+    "machine_id": "PULV001",
+    "machine_type": "Food Pulverizer",
+    "motor_power_kw": 5.5,
+    "rpm": 3000,
+    "shaft_frequency": 50,
+    "sampling_frequency": 5000,
+    "window_size": 5000
+  },
+  "severity": {
+    "blade_wear": 0.50,
+    "bearing_fault": 0.25,
+    "imbalance": 0.30,
+    "misalignment": 0.20,
+    "looseness": 0.10,
+    "material_buildup": 0.40,
+    "partial_clogging": 0.50,
+    "choking": 0.00
+  },
+  "vibration": {
+    "healthy": {
+      "A0": 0.30,
+      "B0": 0.60,
+      "fr": 50,
+      "fg": 300,
+      "harmonics": [
+        {"freq": 100, "amp": 0.05},
+        {"freq": 600, "amp": 0.12}
+      ]
+    },
+    "blade_wear": {"k1": 0.0004, "k2": 0.0007},
+    "bearing_fault": {
+      "enable": true,
+      "fault_frequency": 220,
+      "Ri_min": 0.5,
+      "Ri_max": 2.5,
+      "impulse_width": 0.002
+    },
+    "imbalance": {"enable": true, "Aimb": 0.25},
+    "misalignment": {"enable": true, "A1": 0.20, "A2": 0.10},
+    "looseness": {"enable": true, "Ri_min": 0.3, "Ri_max": 1.5, "impact_rate": 20},
+    "material_buildup": {"enable": true, "Kb": 0.002, "fb": 0.50},
+    "partial_clogging": {"enable": false, "Kc": 0.005, "fc": 0.80},
+    "choking": {"enable": false, "Kc": 0.015, "fc": 1.20, "spike_amp": 3.0},
+    "noise": {"white_std": 0.02, "pink_level": 0.01, "brown_level": 0.005}
+  },
+  "current": {
+    "healthy": {"Ibase": 5.0, "DeltaIload": 0.15, "supply_frequency": 50},
+    "blade_wear": {"enable": true, "Kd": 0.0015},
+    "bearing_fault": {
+      "enable": true,
+      "modulation_index": 0.05,
+      "fault_frequency": 220,
+      "Ri_min": 0.05,
+      "Ri_max": 0.50
+    },
+    "imbalance": {"enable": true, "modulation_index": 0.05},
+    "misalignment": {"enable": true, "m1": 0.05, "m2": 0.03},
+    "material_buildup": {"enable": true, "Kb": 0.001, "modulation": 0.03, "frequency": 0.50},
+    "partial_clogging": {"enable": false, "Kc": 0.005, "modulation": 0.06, "frequency": 0.80},
+    "choking": {
+      "enable": false,
+      "Kc": 0.020,
+      "modulation": 0.15,
+      "frequency": 1.20,
+      "spike_amp": 2.5
+    },
+    "noise": {"std": 0.05}
+  },
+  "temperature": {
+    "healthy": {
+      "ambient": 30,
+      "load_rise": 5,
+      "variation_amp": 0.5,
+      "variation_frequency": 0.01,
+      "noise_std": 0.2
+    },
+    "blade_wear": {"enable": true, "kwear": 0.001},
+    "bearing_fault": {"enable": true, "kbearing": 0.010},
+    "material_buildup": {"enable": true, "kbuildup": 0.003},
+    "partial_clogging": {"enable": false, "kpc": 0.010},
+    "choking": {"enable": false, "kchoke": 0.025}
+  },
+  "feature_extraction": {
+    "time_domain": ["RMS", "Peak", "Variance", "CrestFactor", "Kurtosis", "Skewness"],
+    "frequency_domain": ["FFT", "BandEnergy", "MidBandEnergy", "PeakFrequency", "THD"],
+    "condition_monitoring": ["EWMA", "DualEWMA", "TemperatureRate", "CurrentSlope"]
+  },
+  "process_kpi": {
+    "batch_mass": 1.0,
+    "cycle_time": {
+      "base": 60,
+      "wear_coeff": 30,
+      "bearing_coeff": 10,
+      "load_coeff": 10,
+      "buildup_coeff": 8,
+      "clogging_coeff": 20,
+      "choking_coeff": 60
+    },
+    "throughput": {"formula": "BatchMass*3600/CycleTime"},
+    "grinding_quality_index": {"method": "Weighted DSP Features"},
+    "grinding_efficiency": {"method": "Power Consumption vs Throughput"}
+  }
+}

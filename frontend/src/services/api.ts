@@ -16,7 +16,10 @@ export interface StepData {
   I_base: number;       // Current baseline
   degradation: number;  // Degradation amount
   cycle_time: number;   // Cycle time
-  ewma: number;         // EWMA value
+  ewma: number;         // EWMA value (slow baseline)
+  ewma_fast: number;    // Fast EWMA (trend)
+  ewma_slow: number;    // Slow EWMA (baseline)
+  gap: number;          // fast - slow (trend gap)
   slope: number;        // EWMA slope
   variance: number;     // Rolling variance
   alerts: {             // Alert states
@@ -31,7 +34,10 @@ export interface StepData {
 
 /** Shape of data returned by GET /api/ewma-data */
 export interface EWMAData {
-  ewma: number;
+  ewma: number;         // Slow EWMA (baseline)
+  ewma_fast: number;    // Fast EWMA (trend)
+  ewma_slow: number;    // Slow EWMA (same as ewma)
+  gap: number;          // fast - slow (trend gap)
   slope: number;
   variance: number;
   cycle_time: number;
@@ -41,6 +47,8 @@ export interface EWMAData {
     ucl_2sigma: number;
     ucl_3sigma: number;
     alpha: number;
+    alpha_fast: number;
+    alpha_slow: number;
   };
 }
 
@@ -70,6 +78,8 @@ export interface AlertData {
 /** Configuration for alert thresholds */
 export interface AlertConfig {
   alpha?: number;
+  alpha_fast?: number;
+  alpha_slow?: number;
   mu?: number;
   sigma?: number;
   s_early?: number;
@@ -250,6 +260,55 @@ export async function configureAlerts(config: AlertConfig): Promise<unknown> {
     return null;
   }
 }
+
+/**
+ * POST /api/synthetic/configure — Configure synthetic CBM fault severities and load ratio.
+ * Returns null if the backend is unreachable.
+ */
+export async function configureSynthetic(config: { severity: any; load_ratio?: number }): Promise<unknown> {
+  try {
+    const res = await fetch(`${BASE_URL}/api/synthetic/configure`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(config),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * GET /api/synthetic/health — Get synthetic CBM health indices, alarms, and KPIs.
+ * Returns null if the backend is unreachable.
+ */
+export async function getSyntheticHealth(): Promise<any | null> {
+  try {
+    const res = await fetch(`${BASE_URL}/api/synthetic/health`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * GET /api/synthetic/history?limit=<limit> — Get CBM historical records.
+ * Returns null if the backend is unreachable.
+ */
+export async function getSyntheticHistory(limit: number = 60): Promise<any[] | null> {
+  try {
+    const res = await fetch(`${BASE_URL}/api/synthetic/history?limit=${limit}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.history || null;
+  } catch {
+    return null;
+  }
+}
 /**
  * GET /api/system-status — Get comprehensive system status for integration verification.
  * Returns null if the backend is unreachable.
@@ -317,4 +376,123 @@ async function retryApiCall<T>(
     }
   }
   return null;
+}
+// =============================================================================
+// Six-section Control JSON types (Spec Section 5)
+// =============================================================================
+
+export interface FaultEntry {
+  enabled: boolean;
+  severity: number; // 0-100%
+}
+
+export interface SyntheticControlJson {
+  machine: {
+    machine_name: string;
+    motor_rating_kw: number;
+    motor_speed_rpm: number;
+    rotor_frequency_hz: number;
+    grinding_frequency_hz: number;
+  };
+  signals: {
+    vibration: boolean;
+    current: boolean;
+    temperature: boolean;
+  };
+  simulation: {
+    sampling_frequency: { vibration: number; current: number; temperature: number };
+    window_length_sec: number;
+    duration_sec: number;
+    noise_level: number;
+  };
+  machine_faults: {
+    healthy: boolean;
+    blade_wear: FaultEntry;
+    bearing_fault: FaultEntry;
+    misalignment: FaultEntry;
+    imbalance: FaultEntry;
+    looseness: FaultEntry;
+  };
+  process_faults: {
+    material_buildup: FaultEntry;
+    partial_clogging: FaultEntry;
+    choking: FaultEntry;
+  };
+  output: {
+    csv: boolean;
+    json: boolean;
+    mat: boolean;
+  };
+}
+
+export async function postControlJson(ctrl: SyntheticControlJson): Promise<unknown> {
+  try {
+    const mf = ctrl.machine_faults;
+    const pf = ctrl.process_faults;
+    const res = await fetch(`${BASE_URL}/api/synthetic/configure`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        severity: {
+          bearing_fault:    mf.bearing_fault.enabled    ? mf.bearing_fault.severity / 100    : 0,
+          blade_wear:       mf.blade_wear.enabled        ? mf.blade_wear.severity / 100        : 0,
+          imbalance:        mf.imbalance.enabled         ? mf.imbalance.severity / 100         : 0,
+          misalignment:     mf.misalignment.enabled      ? mf.misalignment.severity / 100      : 0,
+          looseness:        mf.looseness.enabled         ? mf.looseness.severity / 100         : 0,
+          material_buildup: pf.material_buildup.enabled  ? pf.material_buildup.severity / 100  : 0,
+          partial_clogging: pf.partial_clogging.enabled  ? pf.partial_clogging.severity / 100  : 0,
+          choking:          pf.choking.enabled            ? pf.choking.severity / 100            : 0,
+        },
+        load_ratio: 0.70,
+        noise_level: ctrl.simulation.noise_level,
+      }),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch { return null; }
+}
+
+export async function getSyntheticSignal(): Promise<any | null> {
+  try {
+    const res = await fetch(`${BASE_URL}/api/synthetic/signal`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch { return null; }
+}
+
+export async function getSyntheticStatus(): Promise<any | null> {
+  try {
+    const res = await fetch(`${BASE_URL}/api/synthetic/status`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch { return null; }
+}
+
+export async function resetSynthetic(): Promise<unknown> {
+  try {
+    const res = await fetch(`${BASE_URL}/api/synthetic/reset`, { method: 'POST' });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch { return null; }
+}
+
+export async function getSyntheticPresets(): Promise<string[] | null> {
+  try {
+    const res = await fetch(`${BASE_URL}/api/synthetic/presets`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.presets || null;
+  } catch { return null; }
+}
+
+export async function applySyntheticPreset(name: string): Promise<unknown> {
+  try {
+    const res = await fetch(`${BASE_URL}/api/synthetic/preset`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ preset: name }),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch { return null; }
 }
